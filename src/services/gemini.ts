@@ -9,10 +9,6 @@ function getAI() {
                  ((import.meta as any).env?.VITE_GEMINI_API_KEY) || 
                  '';
                  
-  if (!apiKey) {
-    throw new Error("API key must be set when using Gemini API. Please ensure GEMINI_API_KEY is configured in your environment.");
-  }
-  
   return new GoogleGenAI({ apiKey });
 }
 

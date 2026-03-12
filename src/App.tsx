@@ -44,28 +44,9 @@ export default function App() {
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'editor'>('list');
-  const [hasApiKey, setHasApiKey] = useState(true);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const checkKey = async () => {
-      const key = process.env.GEMINI_API_KEY || process.env.API_KEY;
-      if (!key && (window as any).aistudio) {
-        const selected = await (window as any).aistudio.hasSelectedApiKey();
-        setHasApiKey(selected);
-      }
-    };
-    checkKey();
-  }, []);
-
-  const handleOpenKeySelection = async () => {
-    if ((window as any).aistudio) {
-      await (window as any).aistudio.openSelectKey();
-      setHasApiKey(true);
-    }
-  };
 
   useEffect(() => {
     const checkMobile = () => {
@@ -325,20 +306,6 @@ export default function App() {
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] flex flex-col">
       {/* Header */}
       <header className="border-b border-[#141414] px-4 md:px-6 py-3 md:py-4 flex flex-col md:flex-row items-center justify-between sticky top-0 bg-[#E4E3E0] z-20 gap-4">
-        {!hasApiKey && (
-          <div className="absolute inset-x-0 top-full bg-red-600 text-white px-4 py-2 text-[10px] font-mono uppercase tracking-widest flex items-center justify-between z-50">
-            <div className="flex items-center gap-2">
-              <AlertCircle size={12} />
-              API Key missing. Please select a key to enable translation.
-            </div>
-            <button 
-              onClick={handleOpenKeySelection}
-              className="bg-white text-red-600 px-2 py-0.5 rounded-sm font-bold hover:bg-opacity-90 transition-all"
-            >
-              Select Key
-            </button>
-          </div>
-        )}
         <div className="flex items-center justify-between w-full md:w-auto">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 md:w-10 md:h-10 bg-[#141414] rounded-sm flex items-center justify-center text-[#E4E3E0]">
