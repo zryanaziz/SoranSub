@@ -12,11 +12,21 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Pr
   try {
     return await fn();
   } catch (error: any) {
-    if (retries > 0 && (error.message?.includes('429') || error.message?.includes('quota'))) {
+    const errorMsg = error.message || String(error);
+    if (retries > 0 && (errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('rate limit'))) {
       console.warn(`Quota exceeded, retrying in ${delay}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return withRetry(fn, retries - 1, delay * 2);
     }
+    
+    // Enhance error message for the UI
+    if (errorMsg.includes('quota') || errorMsg.includes('429')) {
+      throw new Error("API Quota exceeded. Please wait a moment or use a different key.");
+    }
+    if (errorMsg.includes('API key not valid')) {
+      throw new Error("Invalid API Key. Please check your configuration.");
+    }
+    
     throw error;
   }
 }
