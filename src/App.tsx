@@ -186,6 +186,75 @@ export default function App() {
     handleTranslateRange(selectedIndex, subtitles.length);
   };
 
+  const handleTranslateRemaining = async () => {
+    if (subtitles.length === 0) return;
+    
+    const remainingIndices = subtitles
+      .map((s, idx) => s.translatedText ? -1 : idx)
+      .filter(idx => idx !== -1);
+      
+    if (remainingIndices.length === 0) {
+      setStatus({ type: 'info', message: 'All blocks are already translated.' });
+      return;
+    }
+
+    setIsTranslating(true);
+    setProgress(0);
+    
+    const batchSize = 20;
+    const concurrency = 5;
+    const updatedSubtitles = [...subtitles];
+    const totalToTranslate = remainingIndices.length;
+    
+    try {
+      for (let i = 0; i < remainingIndices.length; i += batchSize * concurrency) {
+        const batchPromises = [];
+        
+        for (let c = 0; c < concurrency; c++) {
+          const batchStartIdx = i + (c * batchSize);
+          if (batchStartIdx >= remainingIndices.length) break;
+          
+          const batchEndIdx = Math.min(batchStartIdx + batchSize, remainingIndices.length);
+          const currentBatchIndices = remainingIndices.slice(batchStartIdx, batchEndIdx);
+          const textsToTranslate = currentBatchIndices.map(idx => subtitles[idx].text);
+          
+          batchPromises.push((async () => {
+            try {
+              const translations = await translateBatch(textsToTranslate);
+              translations.forEach((translation, index) => {
+                const originalIdx = currentBatchIndices[index];
+                if (updatedSubtitles[originalIdx]) {
+                  updatedSubtitles[originalIdx].translatedText = translation;
+                }
+              });
+            } catch (err: any) {
+              console.error("Batch error:", err);
+              throw err;
+            }
+          })());
+        }
+        
+        await Promise.all(batchPromises);
+        setSubtitles([...updatedSubtitles]);
+        const currentTranslated = Math.min(i + batchSize * concurrency, remainingIndices.length);
+        setProgress(Math.round((currentTranslated / totalToTranslate) * 100));
+        
+        if (i + batchSize * concurrency < remainingIndices.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      setStatus({ type: 'success', message: 'Remaining blocks translated!' });
+      playDing();
+      setShowCompletionModal(true);
+    } catch (err: any) {
+      console.error("Translation failed:", err);
+      setStatus({ type: 'error', message: `Translation failed: ${err.message || 'Unknown error'}. Please try again.` });
+    } finally {
+      setIsTranslating(false);
+      setProgress(0);
+    }
+  };
+
   const handleTranslateRangeSubmit = () => {
     const start = parseInt(rangeStart) - 1;
     const end = parseInt(rangeEnd);
@@ -224,6 +293,7 @@ export default function App() {
   };
 
   const selectedItem = selectedIndex !== null ? subtitles[selectedIndex] : null;
+  const translatedCount = subtitles.filter(s => s.translatedText).length;
 
   const handleSelectItem = (idx: number) => {
     setSelectedIndex(idx);
@@ -235,7 +305,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] flex flex-col">
       {/* Header */}
-      <header className="border-b border-[#141414] px-4 md:px-6 py-3 md:py-4 flex flex-col md:flex-row items-center justify-between sticky top-0 bg-[#E4E3E0] z-10 gap-4">
+      <header className="border-b border-[#141414] px-4 md:px-6 py-3 md:py-4 flex flex-col md:flex-row items-center justify-between sticky top-0 bg-[#E4E3E0] z-20 gap-4">
         <div className="flex items-center justify-between w-full md:w-auto">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 md:w-10 md:h-10 bg-[#141414] rounded-sm flex items-center justify-center text-[#E4E3E0]">
@@ -247,26 +317,38 @@ export default function App() {
               <p className="text-[8px] md:text-[10px] uppercase tracking-widest opacity-50 font-mono">Kurdish Sorani AI Editor</p>
             </div>
           </div>
-          
-          {isMobileView && subtitles.length > 0 && (
-            <div className="flex border border-[#141414] rounded-sm overflow-hidden">
-              <button 
-                onClick={() => setActiveTab('list')}
-                className={cn("px-3 py-1 text-[10px] uppercase font-mono", activeTab === 'list' ? "bg-[#141414] text-[#E4E3E0]" : "")}
-              >
-                List
-              </button>
-              <button 
-                onClick={() => setActiveTab('editor')}
-                className={cn("px-3 py-1 text-[10px] uppercase font-mono", activeTab === 'editor' ? "bg-[#141414] text-[#E4E3E0]" : "")}
-              >
-                Editor
-              </button>
+
+          <div className="flex flex-col items-end md:hidden">
+            <div className="text-[10px] font-mono uppercase opacity-70">
+              {translatedCount}/{subtitles.length} Blocks
             </div>
-          )}
+            {isMobileView && subtitles.length > 0 && (
+              <div className="flex border border-[#141414] rounded-sm overflow-hidden mt-1">
+                <button 
+                  onClick={() => setActiveTab('list')}
+                  className={cn("px-3 py-1 text-[10px] uppercase font-mono", activeTab === 'list' ? "bg-[#141414] text-[#E4E3E0]" : "")}
+                >
+                  List
+                </button>
+                <button 
+                  onClick={() => setActiveTab('editor')}
+                  className={cn("px-3 py-1 text-[10px] uppercase font-mono", activeTab === 'editor' ? "bg-[#141414] text-[#E4E3E0]" : "")}
+                >
+                  Editor
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-4 w-full md:w-auto">
+        <div className="hidden md:flex flex-col items-center px-4 border-x border-[#141414] border-opacity-10">
+          <div className="text-[10px] font-mono uppercase opacity-50 tracking-widest mb-1">Progress</div>
+          <div className="text-lg font-serif italic">
+            {translatedCount} <span className="text-xs opacity-50 not-italic font-mono uppercase">of</span> {subtitles.length}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -308,6 +390,15 @@ export default function App() {
                 All
               </>
             )}
+          </button>
+
+          <button 
+            onClick={handleTranslateRemaining}
+            disabled={isTranslating || subtitles.length === 0 || translatedCount === subtitles.length}
+            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+          >
+            <Plus size={12} />
+            Remain
           </button>
 
           <button 
