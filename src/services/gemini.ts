@@ -4,7 +4,15 @@ const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializ
 const MODEL = "gemini-3-flash-preview";
 
 function getAI() {
-  const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+  // Try to get API key from various possible locations
+  const apiKey = (typeof process !== 'undefined' && process.env ? (process.env.API_KEY || process.env.GEMINI_API_KEY) : '') || 
+                 ((import.meta as any).env?.VITE_GEMINI_API_KEY) || 
+                 '';
+                 
+  if (!apiKey) {
+    throw new Error("API key must be set when using Gemini API. Please ensure GEMINI_API_KEY is configured in your environment.");
+  }
+  
   return new GoogleGenAI({ apiKey });
 }
 
