@@ -8,6 +8,10 @@ function getAI() {
   const apiKey = (typeof process !== 'undefined' && process.env ? (process.env.API_KEY || process.env.GEMINI_API_KEY) : '') || 
                  ((import.meta as any).env?.VITE_GEMINI_API_KEY) || 
                  '';
+  
+  if (!apiKey) {
+    throw new Error("API key must be set when using the Gemini API. Please click the 'Set API Key' button in the header.");
+  }
                  
   return new GoogleGenAI({ apiKey });
 }

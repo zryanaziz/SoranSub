@@ -45,9 +45,27 @@ export default function App() {
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'editor'>('list');
+  const [hasApiKey, setHasApiKey] = useState<boolean>(true);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const checkApiKey = async () => {
+      if (window.aistudio?.hasSelectedApiKey) {
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(hasKey);
+      }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleOpenKeySelector = async () => {
+    if (window.aistudio?.openSelectKey) {
+      await window.aistudio.openSelectKey();
+      setHasApiKey(true);
+    }
+  };
 
   useEffect(() => {
     const checkMobile = () => {
@@ -382,6 +400,14 @@ export default function App() {
           </div>
 
           <div className="flex flex-col items-end md:hidden">
+            {!hasApiKey && (
+              <button 
+                onClick={handleOpenKeySelector}
+                className="mb-2 px-2 py-1 bg-red-500 text-white text-[8px] uppercase font-mono rounded-sm animate-pulse"
+              >
+                Set API Key
+              </button>
+            )}
             <div className="text-[10px] font-mono uppercase opacity-70">
               {translatedCount}/{subtitles.length} Blocks
             </div>
@@ -412,6 +438,15 @@ export default function App() {
         </div>
 
         <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
+          {!hasApiKey && (
+            <button 
+              onClick={handleOpenKeySelector}
+              className="flex items-center gap-2 px-3 py-1.5 bg-red-500 text-white text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-600 transition-colors animate-pulse"
+            >
+              <AlertCircle size={12} />
+              Set API Key
+            </button>
+          )}
           <input 
             type="file" 
             ref={fileInputRef} 
