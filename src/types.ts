@@ -5,6 +5,10 @@ export interface SubtitleItem {
   endTime: string;
   text: string;
   translatedText?: string;
+  isOriginalRefined?: boolean;
+  originalText?: string;
+  isTranslationRefined?: boolean;
+  originalTranslatedText?: string;
 }
 
 export type SubtitleFormat = 'srt' | 'vtt';

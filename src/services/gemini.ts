@@ -80,3 +80,65 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
     return texts;
   });
 }
+
+export async function refineBatch(texts: string[]): Promise<string[]> {
+  return withRetry(async () => {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: `You are a professional Kurdish Sorani editor.
+      Your task is to refine the following ${texts.length} translated subtitle lines.
+      
+      RULES:
+      1. Fix any grammar, spelling, or unnatural phrasing while maintaining the original meaning.
+      2. Return a JSON array of strings.
+      3. The output array MUST have exactly ${texts.length} elements.
+      4. Maintain the exact order of the input.
+      
+      INPUT: ${JSON.stringify(texts)}`,
+      config: {
+        systemInstruction: "You are a professional Kurdish Sorani editor. Fix grammar, spelling, and phrasing.",
+        responseMimeType: "application/json",
+      }
+    });
+
+    const result = JSON.parse(response.text || "[]");
+    if (Array.isArray(result) && result.length === texts.length) {
+      return result;
+    }
+    
+    console.warn(`Batch mismatch: expected ${texts.length}, got ${result?.length}`);
+    return texts;
+  });
+}
+
+export async function refineSourceBatch(texts: string[]): Promise<string[]> {
+  return withRetry(async () => {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: `You are a professional editor.
+      Your task is to refine the following ${texts.length} subtitle lines.
+      
+      RULES:
+      1. Fix any grammar, spelling, or unnatural phrasing while maintaining the original meaning and language.
+      2. Return a JSON array of strings.
+      3. The output array MUST have exactly ${texts.length} elements.
+      4. Maintain the exact order of the input.
+      
+      INPUT: ${JSON.stringify(texts)}`,
+      config: {
+        systemInstruction: "You are a professional editor. Fix grammar, spelling, and phrasing in the source language.",
+        responseMimeType: "application/json",
+      }
+    });
+
+    const result = JSON.parse(response.text || "[]");
+    if (Array.isArray(result) && result.length === texts.length) {
+      return result;
+    }
+    
+    console.warn(`Batch mismatch: expected ${texts.length}, got ${result?.length}`);
+    return texts;
+  });
+}

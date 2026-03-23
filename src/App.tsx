@@ -17,7 +17,8 @@ import {
   Loader2,
   ChevronRight,
   Type,
-  Clock
+  Clock,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -25,7 +26,7 @@ import { twMerge } from 'tailwind-merge';
 
 import { SubtitleItem } from './types';
 import { parseSRT, stringifySRT } from './lib/subtitle-utils';
-import { translateBatch, translateToKurdishSorani } from './services/gemini';
+import { translateBatch, translateToKurdishSorani, refineBatch, refineSourceBatch } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -115,13 +116,16 @@ export default function App() {
   const handleUpdateText = (id: string, text: string, isTranslation = false) => {
     setSubtitles(prev => prev.map(item => 
       item.id === id 
-        ? { ...item, [isTranslation ? 'translatedText' : 'text']: text } 
+        ? { 
+            ...item, 
+            [isTranslation ? 'translatedText' : 'text']: text
+          } 
         : item
     ));
   };
 
-  const handleTranslateRange = async (startIndex: number, endIndex: number) => {
-    if (subtitles.length === 0) return;
+  const handleProcessSubtitles = async (indices: number[], shouldRefine: boolean = true) => {
+    if (subtitles.length === 0 || indices.length === 0) return;
     
     setIsTranslating(true);
     setProgress(0);
@@ -129,93 +133,21 @@ export default function App() {
     const batchSize = 20;
     const concurrency = 5;
     const updatedSubtitles = [...subtitles];
-    const totalToTranslate = endIndex - startIndex;
+    const totalSteps = shouldRefine ? indices.length * 2 : indices.length;
+    let completedSteps = 0;
     
     try {
-      for (let i = startIndex; i < endIndex; i += batchSize * concurrency) {
+      // Phase 1: Translation
+      setStatus({ type: 'info', message: 'Translating subtitles...' });
+      for (let i = 0; i < indices.length; i += batchSize * concurrency) {
         const batchPromises = [];
         
         for (let c = 0; c < concurrency; c++) {
-          const start = i + (c * batchSize);
-          if (start >= endIndex) break;
+          const startIdx = i + (c * batchSize);
+          if (startIdx >= indices.length) break;
           
-          const end = Math.min(start + batchSize, endIndex);
-          const batch = subtitles.slice(start, end);
-          const textsToTranslate = batch.map(s => s.text);
-          
-          batchPromises.push((async () => {
-            try {
-              const translations = await translateBatch(textsToTranslate);
-              translations.forEach((translation, index) => {
-                if (updatedSubtitles[start + index]) {
-                  updatedSubtitles[start + index].translatedText = translation;
-                }
-              });
-            } catch (err: any) {
-              console.error("Batch error:", err);
-              throw err;
-            }
-          })());
-        }
-        
-        await Promise.all(batchPromises);
-        setSubtitles([...updatedSubtitles]);
-        const currentTranslated = Math.min(i + batchSize * concurrency, endIndex) - startIndex;
-        setProgress(Math.round((currentTranslated / totalToTranslate) * 100));
-        
-        if (i + batchSize * concurrency < endIndex) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-      setStatus({ type: 'success', message: 'Translation complete!' });
-      playDing();
-      setShowCompletionModal(true);
-    } catch (err: any) {
-      console.error("Translation failed:", err);
-      setStatus({ type: 'error', message: `Translation failed: ${err.message || 'Unknown error'}. Please try again.` });
-    } finally {
-      setIsTranslating(false);
-      setProgress(0);
-    }
-  };
-
-  const handleTranslateAll = () => handleTranslateRange(0, subtitles.length);
-  
-  const handleTranslateFromSelected = () => {
-    if (selectedIndex === null) return;
-    handleTranslateRange(selectedIndex, subtitles.length);
-  };
-
-  const handleTranslateRemaining = async () => {
-    if (subtitles.length === 0) return;
-    
-    const remainingIndices = subtitles
-      .map((s, idx) => s.translatedText ? -1 : idx)
-      .filter(idx => idx !== -1);
-      
-    if (remainingIndices.length === 0) {
-      setStatus({ type: 'info', message: 'All blocks are already translated.' });
-      return;
-    }
-
-    setIsTranslating(true);
-    setProgress(0);
-    
-    const batchSize = 20;
-    const concurrency = 5;
-    const updatedSubtitles = [...subtitles];
-    const totalToTranslate = remainingIndices.length;
-    
-    try {
-      for (let i = 0; i < remainingIndices.length; i += batchSize * concurrency) {
-        const batchPromises = [];
-        
-        for (let c = 0; c < concurrency; c++) {
-          const batchStartIdx = i + (c * batchSize);
-          if (batchStartIdx >= remainingIndices.length) break;
-          
-          const batchEndIdx = Math.min(batchStartIdx + batchSize, remainingIndices.length);
-          const currentBatchIndices = remainingIndices.slice(batchStartIdx, batchEndIdx);
+          const endIdx = Math.min(startIdx + batchSize, indices.length);
+          const currentBatchIndices = indices.slice(startIdx, endIdx);
           const textsToTranslate = currentBatchIndices.map(idx => subtitles[idx].text);
           
           batchPromises.push((async () => {
@@ -236,23 +168,153 @@ export default function App() {
         
         await Promise.all(batchPromises);
         setSubtitles([...updatedSubtitles]);
-        const currentTranslated = Math.min(i + batchSize * concurrency, remainingIndices.length);
-        setProgress(Math.round((currentTranslated / totalToTranslate) * 100));
+        completedSteps += Math.min(batchSize * concurrency, indices.length - i);
+        setProgress(Math.round((completedSteps / totalSteps) * 100));
         
-        if (i + batchSize * concurrency < remainingIndices.length) {
+        if (i + batchSize * concurrency < indices.length) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
-      setStatus({ type: 'success', message: 'Remaining blocks translated!' });
+
+      // Phase 2: Refinement
+      if (shouldRefine) {
+        setStatus({ type: 'info', message: 'Refining translations...' });
+        for (let i = 0; i < indices.length; i += batchSize * concurrency) {
+          const batchPromises = [];
+          
+          for (let c = 0; c < concurrency; c++) {
+            const startIdx = i + (c * batchSize);
+            if (startIdx >= indices.length) break;
+            
+            const endIdx = Math.min(startIdx + batchSize, indices.length);
+            const currentBatchIndices = indices.slice(startIdx, endIdx);
+            const textsToRefine = currentBatchIndices.map(idx => updatedSubtitles[idx].translatedText!);
+            
+            batchPromises.push((async () => {
+              try {
+                const refinements = await refineBatch(textsToRefine);
+                refinements.forEach((refinement, index) => {
+                  const originalIdx = currentBatchIndices[index];
+                  if (updatedSubtitles[originalIdx]) {
+                    updatedSubtitles[originalIdx].translatedText = refinement;
+                  }
+                });
+              } catch (err: any) {
+                console.error("Batch error:", err);
+                throw err;
+              }
+            })());
+          }
+          
+          await Promise.all(batchPromises);
+          setSubtitles([...updatedSubtitles]);
+          completedSteps += Math.min(batchSize * concurrency, indices.length - i);
+          setProgress(Math.round((completedSteps / totalSteps) * 100));
+          
+          if (i + batchSize * concurrency < indices.length) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+      }
+
+      setStatus({ type: 'success', message: 'Process complete!' });
       playDing();
       setShowCompletionModal(true);
     } catch (err: any) {
-      console.error("Translation failed:", err);
-      setStatus({ type: 'error', message: `Translation failed: ${err.message || 'Unknown error'}. Please try again.` });
+      console.error("Process failed:", err);
+      setStatus({ type: 'error', message: `Process failed: ${err.message || 'Unknown error'}. Please try again.` });
     } finally {
       setIsTranslating(false);
       setProgress(0);
     }
+  };
+
+  const handleTranslateAll = () => {
+    const indices = Array.from({ length: subtitles.length }, (_, i) => i);
+    handleProcessSubtitles(indices, true);
+  };
+  
+  const handleRefineOriginal = async () => {
+    if (subtitles.length === 0) return;
+
+    setIsTranslating(true);
+    setProgress(0);
+    
+    const batchSize = 20;
+    const concurrency = 5;
+    const updatedSubtitles = [...subtitles];
+    const indicesToRefine = subtitles.map((_, idx) => idx);
+    const totalToRefine = indicesToRefine.length;
+    
+    try {
+      setStatus({ type: 'info', message: 'Refining original text...' });
+      for (let i = 0; i < indicesToRefine.length; i += batchSize * concurrency) {
+        const batchPromises = [];
+        
+        for (let c = 0; c < concurrency; c++) {
+          const batchStartIdx = i + (c * batchSize);
+          if (batchStartIdx >= indicesToRefine.length) break;
+          
+          const batchEndIdx = Math.min(batchStartIdx + batchSize, indicesToRefine.length);
+          const currentBatchIndices = indicesToRefine.slice(batchStartIdx, batchEndIdx);
+          const textsToRefine = currentBatchIndices.map(idx => subtitles[idx].text);
+          
+          batchPromises.push((async () => {
+            try {
+              const refinements = await refineSourceBatch(textsToRefine);
+              refinements.forEach((refinement, index) => {
+                const originalIdx = currentBatchIndices[index];
+                if (updatedSubtitles[originalIdx]) {
+                  // Put the refined result in the translated block as requested
+                  updatedSubtitles[originalIdx].translatedText = refinement;
+                }
+              });
+            } catch (err: any) {
+              console.error("Batch error:", err);
+              throw err;
+            }
+          })());
+        }
+        
+        await Promise.all(batchPromises);
+        setSubtitles([...updatedSubtitles]);
+        const currentRefined = Math.min(i + batchSize * concurrency, indicesToRefine.length);
+        setProgress(Math.round((currentRefined / totalToRefine) * 100));
+        
+        if (i + batchSize * concurrency < indicesToRefine.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      setStatus({ type: 'success', message: 'Original refinement complete! Results shown in translated column.' });
+      playDing();
+    } catch (err: any) {
+      console.error("Refinement failed:", err);
+      setStatus({ type: 'error', message: `Refinement failed: ${err.message || 'Unknown error'}. Please try again.` });
+    } finally {
+      setIsTranslating(false);
+      setProgress(0);
+    }
+  };
+  
+  const handleTranslateFromSelected = () => {
+    if (selectedIndex === null) return;
+    const indices = Array.from({ length: subtitles.length - selectedIndex }, (_, i) => selectedIndex + i);
+    handleProcessSubtitles(indices, true);
+  };
+
+  const handleTranslateRemaining = async () => {
+    if (subtitles.length === 0) return;
+    
+    const remainingIndices = subtitles
+      .map((s, idx) => s.translatedText ? -1 : idx)
+      .filter(idx => idx !== -1);
+      
+    if (remainingIndices.length === 0) {
+      setStatus({ type: 'info', message: 'All blocks are already translated.' });
+      return;
+    }
+
+    handleProcessSubtitles(remainingIndices, true);
   };
 
   const handleTranslateRangeSubmit = () => {
@@ -263,7 +325,8 @@ export default function App() {
       return;
     }
     setShowRangeModal(false);
-    handleTranslateRange(start, end);
+    const indices = Array.from({ length: end - start }, (_, i) => start + i);
+    handleProcessSubtitles(indices, true);
   };
 
   const handleReTranslateBlock = async () => {
@@ -387,9 +450,18 @@ export default function App() {
             ) : (
               <>
                 <Languages size={12} />
-                All
+                Translate & Refine All
               </>
             )}
+          </button>
+
+          <button 
+            onClick={handleRefineOriginal}
+            disabled={isTranslating || subtitles.length === 0}
+            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+          >
+            <Sparkles size={12} />
+            Refine Original
           </button>
 
           <button 
@@ -398,7 +470,7 @@ export default function App() {
             className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
           >
             <Plus size={12} />
-            Remain
+            Translate & Refine Remain
           </button>
 
           <button 
@@ -407,7 +479,7 @@ export default function App() {
             className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
           >
             <Plus size={12} />
-            Range
+            Translate & Refine Range
           </button>
 
           <button 
@@ -419,7 +491,7 @@ export default function App() {
             )}
           >
             <ChevronRight size={12} />
-            From Selected
+            Translate & Refine From Selected
           </button>
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
@@ -635,7 +707,7 @@ export default function App() {
               exit={{ scale: 0.95, opacity: 0 }}
               className="bg-[#E4E3E0] border border-[#141414] p-6 md:p-8 max-w-xs w-full shadow-2xl"
             >
-              <h2 className="font-serif italic text-xl md:text-2xl mb-4">Translate Range</h2>
+              <h2 className="font-serif italic text-xl md:text-2xl mb-4">Translate & Refine Range</h2>
               <div className="space-y-4 mb-6">
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-mono uppercase opacity-50">Start Block</label>
