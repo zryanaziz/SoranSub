@@ -1,9 +1,34 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Return ONLY the translation.";
 const MODEL = "gemini-3-flash-preview";
 
+// Helper to extract JSON from potentially messy model output
+function extractJson(text: string): any {
+  try {
+    // Try direct parse first
+    return JSON.parse(text);
+  } catch (e) {
+    // Try to find JSON array or object using regex
+    const match = text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch (innerE) {
+        throw new Error(`Failed to parse extracted JSON: ${innerE}`);
+      }
+    }
+    throw e;
+  }
+}
+
+const BATCH_SCHEMA = {
+  type: Type.ARRAY,
+  items: { type: Type.STRING },
+};
+
 function getAI() {
+// ... existing code ...
   // Try to get API key from various possible locations
   const apiKey = (typeof process !== 'undefined' && process.env ? (process.env.API_KEY || process.env.GEMINI_API_KEY) : '') || 
                  ((import.meta as any).env?.VITE_GEMINI_API_KEY) || 
@@ -72,10 +97,11 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
+        responseSchema: BATCH_SCHEMA,
       }
     });
 
-    const result = JSON.parse(response.text || "[]");
+    const result = extractJson(response.text || "[]");
     if (Array.isArray(result) && result.length === texts.length) {
       return result;
     }
@@ -103,10 +129,11 @@ export async function refineBatch(texts: string[]): Promise<string[]> {
       config: {
         systemInstruction: "You are a professional Kurdish Sorani editor. Fix grammar, spelling, and phrasing.",
         responseMimeType: "application/json",
+        responseSchema: BATCH_SCHEMA,
       }
     });
 
-    const result = JSON.parse(response.text || "[]");
+    const result = extractJson(response.text || "[]");
     if (Array.isArray(result) && result.length === texts.length) {
       return result;
     }
@@ -134,10 +161,11 @@ export async function refineSourceBatch(texts: string[]): Promise<string[]> {
       config: {
         systemInstruction: "You are a professional editor. Fix grammar, spelling, and phrasing in the source language.",
         responseMimeType: "application/json",
+        responseSchema: BATCH_SCHEMA,
       }
     });
 
-    const result = JSON.parse(response.text || "[]");
+    const result = extractJson(response.text || "[]");
     if (Array.isArray(result) && result.length === texts.length) {
       return result;
     }

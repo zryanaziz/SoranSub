@@ -148,7 +148,7 @@ export default function App() {
     setIsTranslating(true);
     setProgress(0);
     
-    const batchSize = 20;
+    const batchSize = 50;
     const concurrency = 5;
     const updatedSubtitles = [...subtitles];
     const totalSteps = shouldRefine ? indices.length * 2 : indices.length;
@@ -258,7 +258,7 @@ export default function App() {
     setIsTranslating(true);
     setProgress(0);
     
-    const batchSize = 20;
+    const batchSize = 50;
     const concurrency = 5;
     const updatedSubtitles = [...subtitles];
     const indicesToRefine = subtitles.map((_, idx) => idx);
