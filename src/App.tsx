@@ -51,7 +51,7 @@ export default function App() {
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'editor'>('list');
-  const [hasApiKey, setHasApiKey] = useState<boolean>(true);
+  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [manualKey, setManualKey] = useState('');
   
@@ -60,20 +60,45 @@ export default function App() {
 
   useEffect(() => {
     const checkApiKey = async () => {
-      // Check for manual key first
+      // 1. Check for manual key in localStorage
       const storedKey = localStorage.getItem('gemini_api_key');
       if (storedKey) {
         setHasApiKey(true);
         return;
       }
 
+      // 2. Check for environment variables
+      const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && process.env?.API_KEY);
+      if (envKey) {
+        setHasApiKey(true);
+        return;
+      }
+
+      // 3. Check AI Studio platform key
       if (window.aistudio?.hasSelectedApiKey) {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        setHasApiKey(hasKey);
+        try {
+          const hasKey = await window.aistudio.hasSelectedApiKey();
+          setHasApiKey(hasKey);
+        } catch (e) {
+          console.error("Error checking platform API key:", e);
+          setHasApiKey(false);
+        }
+      } else {
+        setHasApiKey(false);
       }
     };
     checkApiKey();
+    
+    // Periodically check if key was selected via platform
+    const interval = setInterval(checkApiKey, 5000);
+    return () => clearInterval(interval);
   }, []);
+
+  const handleClearKey = () => {
+    setManualApiKey('');
+    setHasApiKey(false);
+    setStatus({ type: 'info', message: 'API Key cleared.' });
+  };
 
   const handleSaveManualKey = () => {
     if (manualKey.trim()) {
@@ -169,6 +194,12 @@ export default function App() {
   const handleProcessSubtitles = async (indices: number[], shouldRefine: boolean = true) => {
     if (subtitles.length === 0 || indices.length === 0) return;
     
+    if (!hasApiKey) {
+      setShowKeyInput(true);
+      setStatus({ type: 'error', message: 'Please set an API key first.' });
+      return;
+    }
+
     setIsTranslating(true);
     setProgress(0);
     
@@ -278,6 +309,12 @@ export default function App() {
   
   const handleRefineOriginal = async () => {
     if (subtitles.length === 0) return;
+
+    if (!hasApiKey) {
+      setShowKeyInput(true);
+      setStatus({ type: 'error', message: 'Please set an API key first.' });
+      return;
+    }
 
     setIsTranslating(true);
     setProgress(0);
@@ -424,22 +461,31 @@ export default function App() {
           </div>
 
           <div className="flex flex-col items-end md:hidden">
-            {!hasApiKey && (
-              <div className="flex flex-col items-end gap-1 mb-2">
-                <button 
-                  onClick={handleOpenKeySelector}
-                  className="px-2 py-1 bg-red-500 text-white text-[8px] uppercase font-mono rounded-sm animate-pulse"
-                >
-                  Select API Key
-                </button>
+            <div className="flex flex-col items-end gap-1 mb-2">
+              {!hasApiKey ? (
+                <>
+                  <button 
+                    onClick={handleOpenKeySelector}
+                    className="px-2 py-1 bg-red-500 text-white text-[8px] uppercase font-mono rounded-sm animate-pulse"
+                  >
+                    Select Key
+                  </button>
+                  <button 
+                    onClick={() => setShowKeyInput(true)}
+                    className="px-2 py-1 border border-red-500 text-red-500 text-[8px] uppercase font-mono rounded-sm"
+                  >
+                    Enter Key
+                  </button>
+                </>
+              ) : (
                 <button 
                   onClick={() => setShowKeyInput(true)}
-                  className="px-2 py-1 border border-red-500 text-red-500 text-[8px] uppercase font-mono rounded-sm"
+                  className="px-2 py-1 border border-[#141414] text-[#141414] text-[8px] uppercase font-mono rounded-sm opacity-50 hover:opacity-100"
                 >
-                  Enter Key
+                  Change Key
                 </button>
-              </div>
-            )}
+              )}
+            </div>
             <div className="text-[10px] font-mono uppercase opacity-70">
               {translatedCount}/{subtitles.length} Blocks
             </div>
@@ -470,23 +516,33 @@ export default function App() {
         </div>
 
         <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
-          {!hasApiKey && (
-            <div className="flex gap-2">
-              <button 
-                onClick={handleOpenKeySelector}
-                className="flex items-center gap-2 px-3 py-1.5 bg-red-500 text-white text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-600 transition-colors animate-pulse"
-              >
-                <AlertCircle size={12} />
-                Select Key
-              </button>
+          <div className="flex gap-2">
+            {!hasApiKey ? (
+              <>
+                <button 
+                  onClick={handleOpenKeySelector}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-red-500 text-white text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-600 transition-colors animate-pulse"
+                >
+                  <AlertCircle size={12} />
+                  Select Key
+                </button>
+                <button 
+                  onClick={() => setShowKeyInput(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 border border-red-500 text-red-500 text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-50 transition-colors"
+                >
+                  Enter Key
+                </button>
+              </>
+            ) : (
               <button 
                 onClick={() => setShowKeyInput(true)}
-                className="flex items-center gap-2 px-3 py-1.5 border border-red-500 text-red-500 text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-50 transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-50 hover:opacity-100"
               >
-                Enter Key
+                <Sparkles size={12} />
+                Key
               </button>
-            </div>
-          )}
+            )}
+          </div>
           <input 
             type="file" 
             ref={fileInputRef} 
