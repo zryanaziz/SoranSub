@@ -45,9 +45,6 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info', message: string } | null>(null);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
-  const [showRangeModal, setShowRangeModal] = useState(false);
-  const [rangeStart, setRangeStart] = useState<string>('1');
-  const [rangeEnd, setRangeEnd] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'editor'>('list');
@@ -124,12 +121,6 @@ export default function App() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
-
-  useEffect(() => {
-    if (subtitles.length > 0 && !rangeEnd) {
-      setRangeEnd(subtitles.length.toString());
-    }
-  }, [subtitles]);
 
   const playDing = () => {
     try {
@@ -375,12 +366,6 @@ export default function App() {
     }
   };
   
-  const handleTranslateFromSelected = () => {
-    if (selectedIndex === null) return;
-    const indices = Array.from({ length: subtitles.length - selectedIndex }, (_, i) => selectedIndex + i);
-    handleProcessSubtitles(indices, true);
-  };
-
   const handleTranslateRemaining = async () => {
     if (subtitles.length === 0) return;
     
@@ -394,18 +379,6 @@ export default function App() {
     }
 
     handleProcessSubtitles(remainingIndices, true);
-  };
-
-  const handleTranslateRangeSubmit = () => {
-    const start = parseInt(rangeStart) - 1;
-    const end = parseInt(rangeEnd);
-    if (isNaN(start) || isNaN(end) || start < 0 || end > subtitles.length || start >= end) {
-      setStatus({ type: 'error', message: 'Invalid range.' });
-      return;
-    }
-    setShowRangeModal(false);
-    const indices = Array.from({ length: end - start }, (_, i) => start + i);
-    handleProcessSubtitles(indices, true);
   };
 
   const handleReTranslateBlock = async () => {
@@ -602,27 +575,6 @@ export default function App() {
           >
             <Plus size={12} />
             Translate & Refine Remain
-          </button>
-
-          <button 
-            onClick={() => setShowRangeModal(true)}
-            disabled={isTranslating || subtitles.length === 0}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
-          >
-            <Plus size={12} />
-            Translate & Refine Range
-          </button>
-
-          <button 
-            onClick={handleTranslateFromSelected}
-            disabled={isTranslating || selectedIndex === null}
-            className={cn(
-              "flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono transition-all",
-              "hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:cursor-not-allowed"
-            )}
-          >
-            <ChevronRight size={12} />
-            Translate & Refine From Selected
           </button>
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
@@ -861,56 +813,6 @@ export default function App() {
                   className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest font-mono hover:bg-opacity-90"
                 >
                   Save Key
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Range Modal */}
-      <AnimatePresence>
-        {showRangeModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#141414] bg-opacity-80 backdrop-blur-sm">
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-[#E4E3E0] border border-[#141414] p-6 md:p-8 max-w-xs w-full shadow-2xl"
-            >
-              <h2 className="font-serif italic text-xl md:text-2xl mb-4">Translate & Refine Range</h2>
-              <div className="space-y-4 mb-6">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-mono uppercase opacity-50">Start Block</label>
-                  <input 
-                    type="number" 
-                    value={rangeStart}
-                    onChange={(e) => setRangeStart(e.target.value)}
-                    className="w-full bg-white border border-[#141414] p-2 font-mono text-sm"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-mono uppercase opacity-50">End Block</label>
-                  <input 
-                    type="number" 
-                    value={rangeEnd}
-                    onChange={(e) => setRangeEnd(e.target.value)}
-                    className="w-full bg-white border border-[#141414] p-2 font-mono text-sm"
-                  />
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => setShowRangeModal(false)}
-                  className="flex-1 py-3 border border-[#141414] font-mono text-[10px] uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleTranslateRangeSubmit}
-                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-mono text-[10px] uppercase tracking-widest hover:opacity-90 transition-all"
-                >
-                  Start
                 </button>
               </div>
             </motion.div>
