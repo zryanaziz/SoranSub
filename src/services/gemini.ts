@@ -27,15 +27,28 @@ const BATCH_SCHEMA = {
   items: { type: Type.STRING },
 };
 
+let manualApiKey: string | null = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
+
+export function setManualApiKey(key: string) {
+  manualApiKey = key;
+  if (typeof window !== 'undefined') {
+    if (key) {
+      localStorage.setItem('gemini_api_key', key);
+    } else {
+      localStorage.removeItem('gemini_api_key');
+    }
+  }
+}
+
 function getAI() {
-// ... existing code ...
   // Try to get API key from various possible locations
-  const apiKey = (typeof process !== 'undefined' && process.env ? (process.env.API_KEY || process.env.GEMINI_API_KEY) : '') || 
+  const apiKey = manualApiKey || 
+                 (typeof process !== 'undefined' && process.env ? (process.env.API_KEY || process.env.GEMINI_API_KEY) : '') || 
                  ((import.meta as any).env?.VITE_GEMINI_API_KEY) || 
                  '';
   
   if (!apiKey) {
-    throw new Error("API key must be set when using the Gemini API. Please click the 'Set API Key' button in the header.");
+    throw new Error("API key must be set when using the Gemini API. Please click the 'Set API Key' button in the header or enter your key manually.");
   }
                  
   return new GoogleGenAI({ apiKey });

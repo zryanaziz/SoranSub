@@ -26,7 +26,13 @@ import { twMerge } from 'tailwind-merge';
 
 import { SubtitleItem } from './types';
 import { parseSRT, stringifySRT } from './lib/subtitle-utils';
-import { translateBatch, translateToKurdishSorani, refineBatch, refineSourceBatch } from './services/gemini';
+import { 
+  translateBatch, 
+  translateToKurdishSorani, 
+  refineBatch, 
+  refineSourceBatch,
+  setManualApiKey 
+} from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -46,12 +52,21 @@ export default function App() {
   const [isMobileView, setIsMobileView] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'editor'>('list');
   const [hasApiKey, setHasApiKey] = useState<boolean>(true);
+  const [showKeyInput, setShowKeyInput] = useState(false);
+  const [manualKey, setManualKey] = useState('');
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const checkApiKey = async () => {
+      // Check for manual key first
+      const storedKey = localStorage.getItem('gemini_api_key');
+      if (storedKey) {
+        setHasApiKey(true);
+        return;
+      }
+
       if (window.aistudio?.hasSelectedApiKey) {
         const hasKey = await window.aistudio.hasSelectedApiKey();
         setHasApiKey(hasKey);
@@ -59,6 +74,15 @@ export default function App() {
     };
     checkApiKey();
   }, []);
+
+  const handleSaveManualKey = () => {
+    if (manualKey.trim()) {
+      setManualApiKey(manualKey.trim());
+      setHasApiKey(true);
+      setShowKeyInput(false);
+      setStatus({ type: 'success', message: 'API Key saved successfully!' });
+    }
+  };
 
   const handleOpenKeySelector = async () => {
     if (window.aistudio?.openSelectKey) {
@@ -401,12 +425,20 @@ export default function App() {
 
           <div className="flex flex-col items-end md:hidden">
             {!hasApiKey && (
-              <button 
-                onClick={handleOpenKeySelector}
-                className="mb-2 px-2 py-1 bg-red-500 text-white text-[8px] uppercase font-mono rounded-sm animate-pulse"
-              >
-                Set API Key
-              </button>
+              <div className="flex flex-col items-end gap-1 mb-2">
+                <button 
+                  onClick={handleOpenKeySelector}
+                  className="px-2 py-1 bg-red-500 text-white text-[8px] uppercase font-mono rounded-sm animate-pulse"
+                >
+                  Select API Key
+                </button>
+                <button 
+                  onClick={() => setShowKeyInput(true)}
+                  className="px-2 py-1 border border-red-500 text-red-500 text-[8px] uppercase font-mono rounded-sm"
+                >
+                  Enter Key
+                </button>
+              </div>
             )}
             <div className="text-[10px] font-mono uppercase opacity-70">
               {translatedCount}/{subtitles.length} Blocks
@@ -439,13 +471,21 @@ export default function App() {
 
         <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
           {!hasApiKey && (
-            <button 
-              onClick={handleOpenKeySelector}
-              className="flex items-center gap-2 px-3 py-1.5 bg-red-500 text-white text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-600 transition-colors animate-pulse"
-            >
-              <AlertCircle size={12} />
-              Set API Key
-            </button>
+            <div className="flex gap-2">
+              <button 
+                onClick={handleOpenKeySelector}
+                className="flex items-center gap-2 px-3 py-1.5 bg-red-500 text-white text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-600 transition-colors animate-pulse"
+              >
+                <AlertCircle size={12} />
+                Select Key
+              </button>
+              <button 
+                onClick={() => setShowKeyInput(true)}
+                className="flex items-center gap-2 px-3 py-1.5 border border-red-500 text-red-500 text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-50 transition-colors"
+              >
+                Enter Key
+              </button>
+            </div>
           )}
           <input 
             type="file" 
@@ -731,6 +771,46 @@ export default function App() {
           <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-green-500 animate-pulse" />
         </div>
       </footer>
+
+      {/* API Key Input Modal */}
+      <AnimatePresence>
+        {showKeyInput && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#141414] bg-opacity-80 p-4 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#E4E3E0] border border-[#141414] p-6 max-w-md w-full shadow-2xl"
+            >
+              <h3 className="text-lg font-serif italic mb-4">Enter Gemini API Key</h3>
+              <p className="text-xs opacity-70 mb-4 font-mono leading-relaxed">
+                Enter your Gemini API key manually. It will be stored locally in your browser.
+              </p>
+              <input 
+                type="password"
+                value={manualKey}
+                onChange={(e) => setManualKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="w-full bg-transparent border border-[#141414] p-2 text-xs font-mono mb-6 focus:outline-none focus:ring-1 focus:ring-[#141414]"
+              />
+              <div className="flex justify-end gap-3">
+                <button 
+                  onClick={() => setShowKeyInput(false)}
+                  className="px-4 py-2 text-[10px] uppercase tracking-widest font-mono opacity-50 hover:opacity-100"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSaveManualKey}
+                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest font-mono hover:bg-opacity-90"
+                >
+                  Save Key
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Range Modal */}
       <AnimatePresence>
