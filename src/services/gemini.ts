@@ -59,8 +59,17 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Pr
     return await fn();
   } catch (error: any) {
     const errorMsg = error.message || String(error);
-    if (retries > 0 && (errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('rate limit'))) {
-      console.warn(`Quota exceeded, retrying in ${delay}ms... (${retries} retries left)`);
+    const isTransient = 
+      errorMsg.includes('429') || 
+      errorMsg.includes('quota') || 
+      errorMsg.includes('rate limit') ||
+      errorMsg.includes('503') ||
+      errorMsg.includes('unavailable') ||
+      errorMsg.includes('500') ||
+      errorMsg.includes('internal error');
+
+    if (retries > 0 && isTransient) {
+      console.warn(`Transient error encountered, retrying in ${delay}ms... (${retries} retries left): ${errorMsg}`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return withRetry(fn, retries - 1, delay * 2);
     }
@@ -68,6 +77,9 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Pr
     // Enhance error message for the UI
     if (errorMsg.includes('quota') || errorMsg.includes('429')) {
       throw new Error("API Quota exceeded. Please wait a moment or use a different key.");
+    }
+    if (errorMsg.includes('503') || errorMsg.includes('unavailable')) {
+      throw new Error("Gemini service is currently overloaded. Retrying might help, or try again later.");
     }
     if (errorMsg.includes('API key not valid')) {
       throw new Error("Invalid API Key. Please check your configuration.");

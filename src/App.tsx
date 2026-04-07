@@ -15,10 +15,16 @@ import {
   CheckCircle2, 
   AlertCircle,
   Loader2,
-  ChevronRight,
-  Type,
+  Video,
+  Search,
+  X,
+  Play,
+  Pause,
+  Maximize2,
+  Sparkles,
   Clock,
-  Sparkles
+  Type,
+  ChevronRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -47,13 +53,47 @@ export default function App() {
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
-  const [activeTab, setActiveTab] = useState<'list' | 'editor'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'editor' | 'video'>('list');
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [manualKey, setManualKey] = useState('');
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isPlaying, setIsPlaying] = useState(false);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Auto-save to localStorage
+  useEffect(() => {
+    if (subtitles.length > 0) {
+      localStorage.setItem('soransub_current_session', JSON.stringify({
+        subtitles,
+        fileName,
+        selectedIndex
+      }));
+    }
+  }, [subtitles, fileName, selectedIndex]);
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('soransub_current_session');
+    if (saved) {
+      try {
+        const { subtitles: savedSubs, fileName: savedName, selectedIndex: savedIdx } = JSON.parse(saved);
+        if (savedSubs && savedSubs.length > 0) {
+          setSubtitles(savedSubs);
+          setFileName(savedName || '');
+          setSelectedIndex(savedIdx ?? 0);
+        }
+      } catch (e) {
+        console.error("Failed to load session", e);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const checkApiKey = async () => {
@@ -148,22 +188,63 @@ export default function App() {
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (file) {
-      setFileName(file.name);
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const content = e.target?.result as string;
-        try {
-          const parsed = parseSRT(content);
-          setSubtitles(parsed);
-          setSelectedIndex(parsed.length > 0 ? 0 : null);
-          setStatus({ type: 'success', message: `Loaded ${parsed.length} subtitles.` });
-        } catch (err) {
-          setStatus({ type: 'error', message: 'Failed to parse SRT file.' });
-        }
-      };
-      reader.readAsText(file);
+      if (file.name.endsWith('.srt')) {
+        setFileName(file.name);
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const content = e.target?.result as string;
+          try {
+            const parsed = parseSRT(content);
+            setSubtitles(parsed);
+            setSelectedIndex(parsed.length > 0 ? 0 : null);
+            setStatus({ type: 'success', message: `Loaded ${parsed.length} subtitles.` });
+          } catch (err) {
+            setStatus({ type: 'error', message: 'Failed to parse SRT file.' });
+          }
+        };
+        reader.readAsText(file);
+      } else if (file.type.startsWith('video/')) {
+        const url = URL.createObjectURL(file);
+        setVideoUrl(url);
+        setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
+      }
     }
   }, []);
+
+  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const url = URL.createObjectURL(file);
+      setVideoUrl(url);
+      setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
+    }
+  };
+
+  const jumpToTime = (seconds: number) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = seconds;
+      videoRef.current.play();
+      setIsPlaying(true);
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (videoRef.current) {
+      const time = videoRef.current.currentTime;
+      setCurrentTime(time);
+      
+      // Auto-select subtitle based on time
+      const activeIdx = subtitles.findIndex(s => time >= s.startTimeSeconds && time <= s.endTimeSeconds);
+      if (activeIdx !== -1 && activeIdx !== selectedIndex) {
+        setSelectedIndex(activeIdx);
+        // Scroll to active item
+        const activeItem = document.getElementById(`sub-${activeIdx}`);
+        if (activeItem && scrollRef.current) {
+          activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+    }
+  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
     onDrop, 
@@ -407,6 +488,12 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const filteredSubtitles = subtitles.filter(s => 
+    s.text.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    (s.translatedText && s.translatedText.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+
+  const currentSubtitle = subtitles.find(s => currentTime >= s.startTimeSeconds && currentTime <= s.endTimeSeconds);
   const selectedItem = selectedIndex !== null ? subtitles[selectedIndex] : null;
   const translatedCount = subtitles.filter(s => s.translatedText).length;
 
@@ -476,6 +563,12 @@ export default function App() {
                 >
                   Editor
                 </button>
+                <button 
+                  onClick={() => setActiveTab('video')}
+                  className={cn("px-3 py-1 text-[10px] uppercase font-mono", activeTab === 'video' ? "bg-[#141414] text-[#E4E3E0]" : "")}
+                >
+                  Video
+                </button>
               </div>
             )}
           </div>
@@ -527,6 +620,23 @@ export default function App() {
               }
             }}
           />
+          <input 
+            type="file" 
+            ref={videoFileInputRef} 
+            className="hidden" 
+            accept="video/*" 
+            onChange={handleVideoUpload}
+          />
+          <button 
+            onClick={() => videoFileInputRef.current?.click()}
+            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0]"
+          >
+            <Video size={12} />
+            Video
+          </button>
+
+          <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
+
           <button 
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0]"
@@ -607,143 +717,233 @@ export default function App() {
             >
               <input {...getInputProps()} />
               <Upload size={40} className="mb-4 opacity-20 md:size-12" />
-              <h2 className="font-serif italic text-xl md:text-2xl mb-2 text-center">Drop your SRT file here</h2>
+              <h2 className="font-serif italic text-xl md:text-2xl mb-2 text-center">Drop SRT or Video here</h2>
               <p className="text-[10px] md:text-xs font-mono opacity-50 uppercase tracking-widest">or click to browse</p>
             </div>
           ) : (
-            <div className="flex-1 overflow-y-auto scrollbar-hide" ref={scrollRef}>
-              <div className="grid grid-cols-[40px_1fr_1fr] border-b border-[#141414] bg-[#E4E3E0] sticky top-0 z-10">
-                <div className="p-2 md:p-3 border-r border-[#141414] text-[8px] md:text-[10px] font-mono uppercase opacity-50">#</div>
-                <div className="p-2 md:p-3 border-r border-[#141414] text-[8px] md:text-[10px] font-mono uppercase opacity-50">Original</div>
-                <div className="p-2 md:p-3 text-[8px] md:text-[10px] font-mono uppercase opacity-50">Kurdish</div>
-              </div>
-              
-              {subtitles.map((item, idx) => (
-                <div 
-                  key={item.id}
-                  onClick={() => handleSelectItem(idx)}
-                  className={cn(
-                    "grid grid-cols-[40px_1fr_1fr] border-b border-[#141414] cursor-pointer transition-colors group",
-                    selectedIndex === idx ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:bg-opacity-5"
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="p-3 border-b border-[#141414] bg-[#F0EFED] flex items-center gap-3">
+                <div className="relative flex-1">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-30" />
+                  <input 
+                    type="text"
+                    placeholder="Search subtitles..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-8 py-1.5 bg-transparent border border-[#141414] border-opacity-20 text-xs font-mono focus:outline-none focus:border-opacity-100"
+                  />
+                  {searchQuery && (
+                    <button 
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 opacity-30 hover:opacity-100"
+                    >
+                      <X size={14} />
+                    </button>
                   )}
-                >
-                  <div className={cn(
-                    "p-2 md:p-3 border-r border-[#141414] font-mono text-[10px] md:text-xs flex items-center justify-center",
-                    selectedIndex === idx ? "border-[#E4E3E0] border-opacity-20" : ""
-                  )}>
-                    {item.index}
-                  </div>
-                  <div className={cn(
-                    "p-2 md:p-3 border-r border-[#141414] text-xs md:text-sm line-clamp-2",
-                    selectedIndex === idx ? "border-[#E4E3E0] border-opacity-20" : ""
-                  )}>
-                    {item.text}
-                  </div>
-                  <div className="p-2 md:p-3 text-xs md:text-sm line-clamp-2 italic font-serif">
-                    {item.translatedText || <span className="opacity-30">...</span>}
-                  </div>
                 </div>
-              ))}
+              </div>
+
+              <div className="flex-1 overflow-y-auto scrollbar-hide" ref={scrollRef}>
+                <div className="grid grid-cols-[40px_1fr_1fr] border-b border-[#141414] bg-[#E4E3E0] sticky top-0 z-10">
+                  <div className="p-2 md:p-3 border-r border-[#141414] text-[8px] md:text-[10px] font-mono uppercase opacity-50">#</div>
+                  <div className="p-2 md:p-3 border-r border-[#141414] text-[8px] md:text-[10px] font-mono uppercase opacity-50">Original</div>
+                  <div className="p-2 md:p-3 text-[8px] md:text-[10px] font-mono uppercase opacity-50">Kurdish</div>
+                </div>
+                
+                {filteredSubtitles.map((item) => {
+                  const idx = subtitles.findIndex(s => s.id === item.id);
+                  const isActive = selectedIndex === idx;
+                  const isCurrentlyPlaying = currentTime >= item.startTimeSeconds && currentTime <= item.endTimeSeconds;
+
+                  return (
+                    <div 
+                      key={item.id}
+                      id={`sub-${idx}`}
+                      onClick={() => handleSelectItem(idx)}
+                      className={cn(
+                        "grid grid-cols-[40px_1fr_1fr] border-b border-[#141414] cursor-pointer transition-colors group relative",
+                        isActive ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:bg-opacity-5",
+                        isCurrentlyPlaying && !isActive && "bg-orange-500 bg-opacity-10"
+                      )}
+                    >
+                      {isCurrentlyPlaying && (
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-orange-500" />
+                      )}
+                      <div className={cn(
+                        "p-2 md:p-3 border-r border-[#141414] font-mono text-[10px] md:text-xs flex items-center justify-center",
+                        isActive ? "border-[#E4E3E0] border-opacity-20" : ""
+                      )}>
+                        {item.index}
+                      </div>
+                      <div className={cn(
+                        "p-2 md:p-3 border-r border-[#141414] text-xs md:text-sm line-clamp-2",
+                        isActive ? "border-[#E4E3E0] border-opacity-20" : ""
+                      )}>
+                        {item.text}
+                      </div>
+                      <div className="p-2 md:p-3 text-xs md:text-sm line-clamp-2 italic font-serif">
+                        {item.translatedText || <span className="opacity-30">...</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
 
-        {/* Right Pane: Editor */}
+        {/* Right Pane: Editor & Video */}
         <div className={cn(
           "bg-[#F0EFED] flex flex-col relative transition-all duration-300",
-          isMobileView ? (activeTab === 'editor' ? "w-full" : "w-0 opacity-0 pointer-events-none") : "w-1/2"
+          isMobileView ? (activeTab === 'editor' || activeTab === 'video' ? "w-full" : "w-0 opacity-0 pointer-events-none") : "w-1/2"
         )}>
-          {selectedItem ? (
-            <div className="flex-1 flex flex-col p-4 md:p-8 gap-4 md:gap-8 overflow-y-auto">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="px-2 py-0.5 md:px-3 md:py-1 bg-[#141414] text-[#E4E3E0] font-mono text-[10px] md:text-xs uppercase tracking-widest">
-                    Block {selectedItem.index}
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px] md:text-xs font-mono opacity-50">
-                    <Clock size={12} />
-                    {selectedItem.startTime}
+          {/* Video Preview Section */}
+          <div className={cn(
+            "border-b border-[#141414] bg-black relative aspect-video group",
+            isMobileView && activeTab !== 'video' && "hidden"
+          )}>
+            {videoUrl ? (
+              <>
+                <video 
+                  ref={videoRef}
+                  src={videoUrl}
+                  className="w-full h-full object-contain"
+                  onTimeUpdate={handleTimeUpdate}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                />
+                {/* Subtitle Overlay */}
+                <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center pointer-events-none px-4 text-center">
+                  {currentSubtitle && (
+                    <div className="bg-black bg-opacity-60 px-4 py-2 rounded-sm mb-2">
+                      <p className="text-white text-sm md:text-base font-sans">{currentSubtitle.text}</p>
+                      {currentSubtitle.translatedText && (
+                        <p className="text-yellow-400 text-sm md:text-base font-serif italic mt-1" dir="rtl">{currentSubtitle.translatedText}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {/* Custom Controls Overlay */}
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  <div className="bg-black bg-opacity-50 p-4 rounded-full pointer-events-auto cursor-pointer" onClick={() => isPlaying ? videoRef.current?.pause() : videoRef.current?.play()}>
+                    {isPlaying ? <Pause size={32} className="text-white" /> : <Play size={32} className="text-white" />}
                   </div>
                 </div>
-                
+              </>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-[#E4E3E0] opacity-30 p-8 text-center">
+                <Video size={48} className="mb-4" />
+                <p className="text-xs font-mono uppercase tracking-widest">No video loaded</p>
                 <button 
-                  onClick={handleReTranslateBlock}
-                  disabled={isTranslating}
-                  className="p-2 border border-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30"
-                  title="Re-translate this block"
+                  onClick={() => videoFileInputRef.current?.click()}
+                  className="mt-4 px-4 py-2 border border-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#E4E3E0] hover:text-black transition-colors"
                 >
-                  <Languages size={14} />
+                  Upload Video
                 </button>
               </div>
+            )}
+          </div>
 
-              <div className="space-y-4 md:space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[8px] md:text-[10px] uppercase tracking-widest font-mono opacity-50 flex items-center gap-2">
-                    <Type size={10} /> Original Text
-                  </label>
-                  <textarea 
-                    value={selectedItem.text}
-                    onChange={(e) => handleUpdateText(selectedItem.id, e.target.value)}
-                    className="w-full h-24 md:h-32 bg-transparent border border-[#141414] p-3 md:p-4 text-base md:text-lg focus:outline-none focus:ring-1 focus:ring-[#141414] resize-none"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[8px] md:text-[10px] uppercase tracking-widest font-mono opacity-50 flex items-center justify-between">
-                    <span className="flex items-center gap-2"><Languages size={10} /> Kurdish Sorani</span>
+          {/* Editor Section */}
+          <div className={cn(
+            "flex-1 flex flex-col transition-all",
+            isMobileView && activeTab !== 'editor' && "hidden"
+          )}>
+            {selectedItem ? (
+              <div className="flex-1 flex flex-col p-4 md:p-6 gap-4 md:gap-6 overflow-y-auto">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="px-2 py-0.5 md:px-3 md:py-1 bg-[#141414] text-[#E4E3E0] font-mono text-[10px] md:text-xs uppercase tracking-widest">
+                      Block {selectedItem.index}
+                    </div>
                     <button 
-                      onClick={() => handleUpdateText(selectedItem.id, selectedItem.text, true)}
-                      className="hover:text-[#141414] transition-colors flex items-center gap-1"
+                      onClick={() => jumpToTime(selectedItem.startTimeSeconds)}
+                      className="flex items-center gap-2 text-[10px] md:text-xs font-mono opacity-50 hover:opacity-100 transition-opacity"
                     >
-                      <Save size={10} /> Copy Original
+                      <Clock size={12} />
+                      {selectedItem.startTime}
                     </button>
-                  </label>
-                  <textarea 
-                    value={selectedItem.translatedText || ''}
-                    onChange={(e) => handleUpdateText(selectedItem.id, e.target.value, true)}
-                    placeholder="Translation will appear here..."
-                    className={cn(
-                      "w-full h-24 md:h-32 bg-white border border-[#141414] p-3 md:p-4 text-base md:text-lg font-serif italic focus:outline-none focus:ring-1 focus:ring-[#141414] resize-none transition-all",
-                      selectedIndex !== null && "ring-1 md:ring-2 ring-[#141414] ring-offset-1 md:ring-offset-2"
-                    )}
-                    dir="rtl"
-                  />
+                  </div>
+                  
+                  <button 
+                    onClick={handleReTranslateBlock}
+                    disabled={isTranslating}
+                    className="p-2 border border-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30"
+                    title="Re-translate this block"
+                  >
+                    <Languages size={14} />
+                  </button>
+                </div>
+
+                <div className="space-y-4 md:space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[8px] md:text-[10px] uppercase tracking-widest font-mono opacity-50 flex items-center gap-2">
+                      <Type size={10} /> Original Text
+                    </label>
+                    <textarea 
+                      value={selectedItem.text}
+                      onChange={(e) => handleUpdateText(selectedItem.id, e.target.value)}
+                      className="w-full h-20 md:h-24 bg-transparent border border-[#141414] p-3 md:p-4 text-sm md:text-base focus:outline-none focus:ring-1 focus:ring-[#141414] resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[8px] md:text-[10px] uppercase tracking-widest font-mono opacity-50 flex items-center justify-between">
+                      <span className="flex items-center gap-2"><Languages size={10} /> Kurdish Sorani</span>
+                      <button 
+                        onClick={() => handleUpdateText(selectedItem.id, selectedItem.text, true)}
+                        className="hover:text-[#141414] transition-colors flex items-center gap-1"
+                      >
+                        <Save size={10} /> Copy Original
+                      </button>
+                    </label>
+                    <textarea 
+                      value={selectedItem.translatedText || ''}
+                      onChange={(e) => handleUpdateText(selectedItem.id, e.target.value, true)}
+                      placeholder="Translation will appear here..."
+                      className={cn(
+                        "w-full h-20 md:h-24 bg-white border border-[#141414] p-3 md:p-4 text-sm md:text-base font-serif italic focus:outline-none focus:ring-1 focus:ring-[#141414] resize-none transition-all",
+                        selectedIndex !== null && "ring-1 md:ring-2 ring-[#141414] ring-offset-1 md:ring-offset-2"
+                      )}
+                      dir="rtl"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-auto flex gap-2 md:gap-4">
+                  <button 
+                    onClick={() => {
+                      if (selectedIndex !== null && selectedIndex > 0) {
+                        handleSelectItem(selectedIndex - 1);
+                      }
+                    }}
+                    disabled={selectedIndex === 0}
+                    className="flex-1 flex items-center justify-center gap-2 py-2 md:py-3 border border-[#141414] font-mono text-[10px] md:text-xs uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0] transition-all disabled:opacity-30"
+                  >
+                    Prev
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (selectedIndex !== null && selectedIndex < subtitles.length - 1) {
+                        handleSelectItem(selectedIndex + 1);
+                      }
+                    }}
+                    disabled={selectedIndex === subtitles.length - 1}
+                    className="flex-1 flex items-center justify-center gap-2 py-2 md:py-3 bg-[#141414] text-[#E4E3E0] font-mono text-[10px] md:text-xs uppercase tracking-widest hover:opacity-90 transition-all disabled:opacity-30"
+                  >
+                    Next
+                    <ChevronRight size={14} />
+                  </button>
                 </div>
               </div>
-
-              <div className="mt-auto flex gap-2 md:gap-4">
-                <button 
-                  onClick={() => {
-                    if (selectedIndex !== null && selectedIndex > 0) {
-                      handleSelectItem(selectedIndex - 1);
-                    }
-                  }}
-                  disabled={selectedIndex === 0}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 md:py-3 border border-[#141414] font-mono text-[10px] md:text-xs uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0] transition-all disabled:opacity-30"
-                >
-                  Prev
-                </button>
-                <button 
-                  onClick={() => {
-                    if (selectedIndex !== null && selectedIndex < subtitles.length - 1) {
-                      handleSelectItem(selectedIndex + 1);
-                    }
-                  }}
-                  disabled={selectedIndex === subtitles.length - 1}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 md:py-3 bg-[#141414] text-[#E4E3E0] font-mono text-[10px] md:text-xs uppercase tracking-widest hover:opacity-90 transition-all disabled:opacity-30"
-                >
-                  Next
-                  <ChevronRight size={14} />
-                </button>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center opacity-20 p-8 md:p-12 text-center">
+                <Type size={48} className="mb-4 md:size-64" />
+                <h2 className="font-serif italic text-xl md:text-2xl">Select a block to edit</h2>
+                <p className="text-[10px] md:text-xs font-mono uppercase tracking-widest">or upload a file to begin</p>
               </div>
-            </div>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center opacity-20 p-8 md:p-12 text-center">
-              <Type size={48} className="mb-4 md:size-64" />
-              <h2 className="font-serif italic text-xl md:text-2xl">Select a block to edit</h2>
-              <p className="text-[10px] md:text-xs font-mono uppercase tracking-widest">or upload a file to begin</p>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </main>
 

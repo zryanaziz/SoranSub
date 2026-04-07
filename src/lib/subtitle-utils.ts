@@ -17,6 +17,8 @@ export function parseSRT(content: string): SubtitleItem[] {
           index,
           startTime: timeMatch[1],
           endTime: timeMatch[2],
+          startTimeSeconds: timeToSeconds(timeMatch[1]),
+          endTimeSeconds: timeToSeconds(timeMatch[2]),
           text,
         });
       }
@@ -33,6 +35,13 @@ export function stringifySRT(items: SubtitleItem[], useTranslation = false): str
       return `${item.index}\n${item.startTime} --> ${item.endTime}\n${text}\n`;
     })
     .join('\n');
+}
+
+export function timeToSeconds(timeStr: string): number {
+  const match = timeStr.match(/(\d{2}):(\d{2}):(\d{2}),(\d{3})/);
+  if (!match) return 0;
+  const [, hh, mm, ss, ms] = match.map(Number);
+  return hh * 3600 + mm * 60 + ss + ms / 1000;
 }
 
 export function formatTime(seconds: number): string {

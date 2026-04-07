@@ -3,6 +3,8 @@ export interface SubtitleItem {
   index: number;
   startTime: string;
   endTime: string;
+  startTimeSeconds: number;
+  endTimeSeconds: number;
   text: string;
   translatedText?: string;
   isOriginalRefined?: boolean;
