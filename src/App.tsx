@@ -333,7 +333,7 @@ export default function App() {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
     onDrop, 
     accept: {
-      'text/plain': ['.srt', '.vtt', '.sub'],
+      'text/plain': ['.srt', '.vtt', '.sub', '.ass'],
       'application/x-subrip': ['.srt'],
       'text/vtt': ['.vtt'],
       'video/*': ['.mp4', '.webm', '.ogg', '.mkv'],
@@ -365,7 +365,7 @@ export default function App() {
     setIsTranslating(true);
     setProgress(0);
     
-    const batchSize = 50;
+    const batchSize = 100;
     const concurrency = 5;
     const updatedSubtitles = [...subtitles];
     const totalSteps = shouldRefine ? indices.length * 2 : indices.length;
@@ -407,7 +407,7 @@ export default function App() {
         setProgress(Math.round((completedSteps / totalSteps) * 100));
         
         if (i + batchSize * concurrency < indices.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
 
@@ -447,7 +447,7 @@ export default function App() {
           setProgress(Math.round((completedSteps / totalSteps) * 100));
           
           if (i + batchSize * concurrency < indices.length) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 500));
           }
         }
       }

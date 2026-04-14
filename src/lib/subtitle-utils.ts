@@ -113,11 +113,54 @@ export function parseMicroDVD(content: string, fps = 23.976): SubtitleItem[] {
   return items;
 }
 
+export function parseASS(content: string): SubtitleItem[] {
+  const items: SubtitleItem[] = [];
+  const lines = content.split('\n');
+  let index = 1;
+
+  lines.forEach(line => {
+    if (line.startsWith('Dialogue:')) {
+      const parts = line.split(',');
+      if (parts.length >= 10) {
+        const startTime = parts[1].trim();
+        const endTime = parts[2].trim();
+        const text = parts.slice(9).join(',').replace(/\\N/g, '\n').replace(/\{.*?\}/g, '');
+        
+        const startSec = assTimeToSeconds(startTime);
+        const endSec = assTimeToSeconds(endTime);
+
+        items.push({
+          id: crypto.randomUUID(),
+          index: index++,
+          startTime: startTime.replace('.', ','),
+          endTime: endTime.replace('.', ','),
+          startTimeSeconds: startSec,
+          endTimeSeconds: endSec,
+          text,
+        });
+      }
+    }
+  });
+
+  return items;
+}
+
+function assTimeToSeconds(timeStr: string): number {
+  const match = timeStr.match(/(\d):(\d{2}):(\d{2})\.(\d{2})/);
+  if (!match) return 0;
+  const [, hh, mm, ss, cs] = match.map(Number);
+  return hh * 3600 + mm * 60 + ss + cs / 100;
+}
+
 export function parseSubtitle(content: string, fileName: string): SubtitleItem[] {
   const ext = fileName.toLowerCase().split('.').pop();
   
   if (ext === 'vtt' || content.startsWith('WEBVTT')) {
     return parseVTT(content);
+  }
+  
+  if (ext === 'ass') {
+    return parseASS(content);
   }
   
   if (ext === 'sub') {
