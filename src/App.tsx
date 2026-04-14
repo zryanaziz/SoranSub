@@ -20,6 +20,8 @@ import {
   X,
   Play,
   Pause,
+  RotateCcw,
+  RotateCw,
   Maximize2,
   Sparkles,
   Clock,
@@ -31,7 +33,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import { SubtitleItem } from './types';
-import { parseSRT, stringifySRT } from './lib/subtitle-utils';
+import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime } from './lib/subtitle-utils';
 import { 
   translateBatch, 
   translateToKurdishSorani, 
@@ -58,14 +60,45 @@ export default function App() {
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [manualKey, setManualKey] = useState('');
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoType, setVideoType] = useState<string>('');
   const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [syncOffset, setSyncOffset] = useState('0');
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoFileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input or textarea
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (videoRef.current) {
+          if (isPlaying) videoRef.current.pause();
+          else videoRef.current.play();
+        }
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        handleSkip(-5);
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        handleSkip(5);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPlaying]);
 
   // Auto-save to localStorage
   useEffect(() => {
@@ -188,35 +221,68 @@ export default function App() {
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (file) {
-      if (file.name.endsWith('.srt')) {
+      const ext = file.name.toLowerCase().split('.').pop();
+      
+      if (ext === 'sup') {
+        setStatus({ 
+          type: 'error', 
+          message: '.sup files are bitmap-based (PGS) and cannot be edited as text. Please convert them to .srt or .vtt first.' 
+        });
+        return;
+      }
+
+      if (['srt', 'vtt', 'sub'].includes(ext || '')) {
         setFileName(file.name);
         const reader = new FileReader();
         reader.onload = (e) => {
           const content = e.target?.result as string;
           try {
-            const parsed = parseSRT(content);
+            const parsed = parseSubtitle(content, file.name);
             setSubtitles(parsed);
             setSelectedIndex(parsed.length > 0 ? 0 : null);
-            setStatus({ type: 'success', message: `Loaded ${parsed.length} subtitles.` });
+            setStatus({ type: 'success', message: `Loaded ${parsed.length} subtitles from ${file.name}.` });
           } catch (err) {
-            setStatus({ type: 'error', message: 'Failed to parse SRT file.' });
+            setStatus({ type: 'error', message: `Failed to parse ${ext?.toUpperCase()} file.` });
           }
         };
         reader.readAsText(file);
-      } else if (file.type.startsWith('video/')) {
+      } else if (file.type.startsWith('video/') || ['mp4', 'webm', 'ogg', 'mkv'].includes(ext || '')) {
         const url = URL.createObjectURL(file);
         setVideoUrl(url);
-        setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
+        setVideoType(file.type || `video/${ext}`);
+        
+        if (ext === 'mkv') {
+          setStatus({ 
+            type: 'info', 
+            message: 'MKV files have limited browser support. If you hear sound but see no image, please convert to MP4 (H.264).' 
+          });
+        } else {
+          setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
+        }
+        
+        if (isMobileView) setActiveTab('video');
       }
     }
-  }, []);
+  }, [isMobileView]);
 
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      const ext = file.name.toLowerCase().split('.').pop();
       const url = URL.createObjectURL(file);
       setVideoUrl(url);
-      setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
+      setVideoType(file.type || `video/${ext}`);
+      
+      if (ext === 'mkv') {
+        setStatus({ 
+          type: 'info', 
+          message: 'MKV files have limited browser support. If you hear sound but see no image, please convert to MP4 (H.264).' 
+        });
+      } else {
+        setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
+      }
+      
+      if (isMobileView) setActiveTab('video');
     }
   };
 
@@ -233,6 +299,10 @@ export default function App() {
       const time = videoRef.current.currentTime;
       setCurrentTime(time);
       
+      if (videoRef.current.duration && duration !== videoRef.current.duration) {
+        setDuration(videoRef.current.duration);
+      }
+      
       // Auto-select subtitle based on time
       const activeIdx = subtitles.findIndex(s => time >= s.startTimeSeconds && time <= s.endTimeSeconds);
       if (activeIdx !== -1 && activeIdx !== selectedIndex) {
@@ -246,9 +316,29 @@ export default function App() {
     }
   };
 
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = parseFloat(e.target.value);
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
+    }
+  };
+
+  const handleSkip = (seconds: number) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime += seconds;
+    }
+  };
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
     onDrop, 
-    accept: { 'text/plain': ['.srt'] },
+    accept: {
+      'text/plain': ['.srt', '.vtt', '.sub'],
+      'application/x-subrip': ['.srt'],
+      'text/vtt': ['.vtt'],
+      'video/*': ['.mp4', '.webm', '.ogg', '.mkv'],
+      'application/octet-stream': ['.sup']
+    },
     multiple: false 
   } as any);
 
@@ -488,6 +578,27 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleSyncSubtitles = () => {
+    const offset = parseFloat(syncOffset);
+    if (!isNaN(offset)) {
+      setSubtitles(prev => shiftSubtitles(prev, offset));
+      setStatus({ type: 'success', message: `Shifted all subtitles by ${offset}s` });
+      setShowSyncModal(false);
+      setSyncOffset('0');
+    }
+  };
+
+  const toggleFullScreen = () => {
+    if (!videoContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      videoContainerRef.current.requestFullscreen().catch(err => {
+        console.error(`Error attempting to enable full-screen mode: ${err.message}`);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
   const filteredSubtitles = subtitles.filter(s => 
     s.text.toLowerCase().includes(searchQuery.toLowerCase()) || 
     (s.translatedText && s.translatedText.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -549,26 +660,30 @@ export default function App() {
             <div className="text-[10px] font-mono uppercase opacity-70">
               {translatedCount}/{subtitles.length} Blocks
             </div>
-            {isMobileView && subtitles.length > 0 && (
+            {(subtitles.length > 0 || videoUrl) && (
               <div className="flex border border-[#141414] rounded-sm overflow-hidden mt-1">
                 <button 
                   onClick={() => setActiveTab('list')}
-                  className={cn("px-3 py-1 text-[10px] uppercase font-mono", activeTab === 'list' ? "bg-[#141414] text-[#E4E3E0]" : "")}
+                  className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors", activeTab === 'list' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5")}
                 >
-                  List
+                  {isMobileView ? 'List' : 'Split View'}
                 </button>
-                <button 
-                  onClick={() => setActiveTab('editor')}
-                  className={cn("px-3 py-1 text-[10px] uppercase font-mono", activeTab === 'editor' ? "bg-[#141414] text-[#E4E3E0]" : "")}
-                >
-                  Editor
-                </button>
-                <button 
-                  onClick={() => setActiveTab('video')}
-                  className={cn("px-3 py-1 text-[10px] uppercase font-mono", activeTab === 'video' ? "bg-[#141414] text-[#E4E3E0]" : "")}
-                >
-                  Video
-                </button>
+                {subtitles.length > 0 && (
+                  <button 
+                    onClick={() => setActiveTab('editor')}
+                    className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors", activeTab === 'editor' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5")}
+                  >
+                    Editor
+                  </button>
+                )}
+                {videoUrl && (
+                  <button 
+                    onClick={() => setActiveTab('video')}
+                    className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors", activeTab === 'video' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5")}
+                  >
+                    Video
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -613,7 +728,7 @@ export default function App() {
             type="file" 
             ref={fileInputRef} 
             className="hidden" 
-            accept=".srt" 
+            accept=".srt,.vtt,.sub" 
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
                 onDrop([e.target.files[0]]);
@@ -637,6 +752,13 @@ export default function App() {
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
+          <button 
+            onClick={() => setShowSyncModal(true)}
+            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0]"
+          >
+            <Clock size={12} />
+            Sync
+          </button>
           <button 
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0]"
@@ -705,7 +827,7 @@ export default function App() {
         {/* Left Pane: Subtitle List */}
         <div className={cn(
           "border-r border-[#141414] flex flex-col transition-all duration-300",
-          isMobileView ? (activeTab === 'list' ? "w-full" : "w-0 opacity-0 pointer-events-none") : "w-1/2"
+          activeTab === 'list' ? (isMobileView ? "w-full" : "w-1/2") : "w-0 opacity-0 pointer-events-none"
         )}>
           {subtitles.length === 0 ? (
             <div 
@@ -717,8 +839,8 @@ export default function App() {
             >
               <input {...getInputProps()} />
               <Upload size={40} className="mb-4 opacity-20 md:size-12" />
-              <h2 className="font-serif italic text-xl md:text-2xl mb-2 text-center">Drop SRT or Video here</h2>
-              <p className="text-[10px] md:text-xs font-mono opacity-50 uppercase tracking-widest">or click to browse</p>
+              <h2 className="font-serif italic text-xl md:text-2xl mb-2 text-center">Drop Subtitles or Video here</h2>
+              <p className="text-[10px] md:text-xs font-mono opacity-50 uppercase tracking-widest text-center">Supports SRT, VTT, SUB (MicroDVD)</p>
             </div>
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">
@@ -795,38 +917,130 @@ export default function App() {
         {/* Right Pane: Editor & Video */}
         <div className={cn(
           "bg-[#F0EFED] flex flex-col relative transition-all duration-300",
-          isMobileView ? (activeTab === 'editor' || activeTab === 'video' ? "w-full" : "w-0 opacity-0 pointer-events-none") : "w-1/2"
+          activeTab === 'list' ? (isMobileView ? "w-0 opacity-0 pointer-events-none" : "w-1/2") : "w-full"
         )}>
           {/* Video Preview Section */}
-          <div className={cn(
-            "border-b border-[#141414] bg-black relative aspect-video group",
-            isMobileView && activeTab !== 'video' && "hidden"
-          )}>
+          <div 
+            ref={videoContainerRef}
+            className={cn(
+              "bg-black relative group transition-all duration-300 flex flex-col items-center justify-center overflow-hidden min-h-[300px] md:min-h-[400px]",
+              activeTab === 'video' ? "flex-1" : (activeTab === 'editor' ? "hidden" : "aspect-video border-b border-[#141414]")
+            )}
+          >
             {videoUrl ? (
               <>
                 <video 
+                  key={videoUrl}
                   ref={videoRef}
-                  src={videoUrl}
                   className="w-full h-full object-contain"
                   onTimeUpdate={handleTimeUpdate}
                   onPlay={() => setIsPlaying(true)}
                   onPause={() => setIsPlaying(false)}
-                />
-                {/* Subtitle Overlay */}
-                <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center pointer-events-none px-4 text-center">
+                  onClick={() => isPlaying ? videoRef.current?.pause() : videoRef.current?.play()}
+                  onError={(e) => {
+                    console.error("Video error:", e);
+                    setStatus({ 
+                      type: 'error', 
+                      message: 'Video playback failed. This is usually due to an unsupported codec (like H.265/HEVC). Try converting to H.264 MP4.' 
+                    });
+                  }}
+                  playsInline
+                  crossOrigin="anonymous"
+                >
+                  <source src={videoUrl} type={videoType} />
+                </video>
+                
+                {/* Codec Warning Overlay (Only if sound but no image is common) */}
+                {videoType.includes('mkv') && isPlaying && (
+                  <div className="absolute top-4 left-4 right-4 bg-yellow-500/90 text-black text-[10px] p-2 rounded-sm font-mono uppercase tracking-widest z-50 animate-pulse pointer-events-none">
+                    Warning: MKV detected. If you see no image, convert to MP4.
+                  </div>
+                )}
+                
+                {/* Top Overlay: Original Text */}
+                <div className="absolute top-10 left-0 right-0 flex flex-col items-center pointer-events-none px-4 text-center">
                   {currentSubtitle && (
-                    <div className="bg-black bg-opacity-60 px-4 py-2 rounded-sm mb-2">
+                    <div className="bg-black bg-opacity-60 px-4 py-2 rounded-sm max-w-[80%]">
                       <p className="text-white text-sm md:text-base font-sans">{currentSubtitle.text}</p>
-                      {currentSubtitle.translatedText && (
-                        <p className="text-yellow-400 text-sm md:text-base font-serif italic mt-1" dir="rtl">{currentSubtitle.translatedText}</p>
-                      )}
                     </div>
                   )}
                 </div>
+
+                {/* Bottom Overlay: Translated Text (Editable) */}
+                <div className="absolute bottom-16 left-0 right-0 flex flex-col items-center px-4 text-center">
+                  {currentSubtitle && (
+                    <div className="bg-black bg-opacity-70 px-4 py-2 rounded-sm max-w-[80%] border border-yellow-500/30">
+                      <textarea
+                        value={currentSubtitle.translatedText || ''}
+                        onChange={(e) => handleUpdateText(currentSubtitle.id, e.target.value, true)}
+                        placeholder="Type translation here..."
+                        className="bg-transparent text-yellow-400 text-sm md:text-lg font-serif italic w-full border-none focus:outline-none resize-none text-center min-w-[200px]"
+                        dir="rtl"
+                        rows={2}
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {/* Custom Controls Overlay */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-4 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-3">
+                  {/* Seekbar */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-mono text-white w-12 text-right">{formatTime(currentTime).split(',')[0]}</span>
+                    <input 
+                      type="range"
+                      min={0}
+                      max={duration || 0}
+                      step={0.1}
+                      value={currentTime}
+                      onChange={handleSeek}
+                      className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                    />
+                    <span className="text-[10px] font-mono text-white w-12">{formatTime(duration || 0).split(',')[0]}</span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-6">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleSkip(-5); }}
+                        className="text-white hover:text-yellow-400 transition-colors"
+                        title="Back 5s"
+                      >
+                        <RotateCcw size={20} />
+                      </button>
+                      
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); isPlaying ? videoRef.current?.pause() : videoRef.current?.play(); }}
+                        className="text-white hover:text-yellow-400 transition-colors"
+                      >
+                        {isPlaying ? <Pause size={24} /> : <Play size={24} />}
+                      </button>
+
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleSkip(5); }}
+                        className="text-white hover:text-yellow-400 transition-colors"
+                        title="Forward 5s"
+                      >
+                        <RotateCw size={20} />
+                      </button>
+                    </div>
+
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); toggleFullScreen(); }}
+                      className="text-white hover:text-yellow-400 transition-colors"
+                      title="Toggle Fullscreen"
+                    >
+                      <Maximize2 size={20} />
+                    </button>
+                  </div>
+                </div>
+
                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                  <div className="bg-black bg-opacity-50 p-4 rounded-full pointer-events-auto cursor-pointer" onClick={() => isPlaying ? videoRef.current?.pause() : videoRef.current?.play()}>
-                    {isPlaying ? <Pause size={32} className="text-white" /> : <Play size={32} className="text-white" />}
+                  <div className="bg-black bg-opacity-50 p-6 rounded-full pointer-events-auto cursor-pointer" onClick={(e) => {
+                    e.stopPropagation();
+                    isPlaying ? videoRef.current?.pause() : videoRef.current?.play();
+                  }}>
+                    {isPlaying ? <Pause size={48} className="text-white" /> : <Play size={48} className="text-white" />}
                   </div>
                 </div>
               </>
@@ -834,6 +1048,7 @@ export default function App() {
               <div className="w-full h-full flex flex-col items-center justify-center text-[#E4E3E0] opacity-30 p-8 text-center">
                 <Video size={48} className="mb-4" />
                 <p className="text-xs font-mono uppercase tracking-widest">No video loaded</p>
+                <p className="text-[8px] mt-2 max-w-xs font-mono uppercase tracking-tighter">Use H.264 MP4 for best compatibility. MKV/H.265 may play sound only.</p>
                 <button 
                   onClick={() => videoFileInputRef.current?.click()}
                   className="mt-4 px-4 py-2 border border-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#E4E3E0] hover:text-black transition-colors"
@@ -847,7 +1062,7 @@ export default function App() {
           {/* Editor Section */}
           <div className={cn(
             "flex-1 flex flex-col transition-all",
-            isMobileView && activeTab !== 'editor' && "hidden"
+            activeTab === 'video' && "hidden"
           )}>
             {selectedItem ? (
               <div className="flex-1 flex flex-col p-4 md:p-6 gap-4 md:gap-6 overflow-y-auto">
@@ -1041,6 +1256,152 @@ export default function App() {
               >
                 Continue Editing
               </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Time Sync Modal */}
+      <AnimatePresence>
+        {showSyncModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSyncModal(false)}
+              className="absolute inset-0 bg-[#141414]/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-[#E4E3E0] w-full max-w-md p-8 rounded-sm shadow-2xl border border-[#141414]"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="font-serif italic text-2xl">Sync Subtitles</h3>
+                <button onClick={() => setShowSyncModal(false)} className="opacity-50 hover:opacity-100">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="space-y-6">
+                <p className="text-xs font-mono uppercase tracking-widest opacity-60">
+                  Shift all subtitles forward or backward in time.
+                </p>
+                
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-widest font-mono opacity-50">Offset (seconds)</label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="number"
+                      step="0.1"
+                      value={syncOffset}
+                      onChange={(e) => setSyncOffset(e.target.value)}
+                      className="flex-1 bg-transparent border border-[#141414] p-3 font-mono text-lg focus:outline-none"
+                      placeholder="e.g. 1.5 or -0.5"
+                    />
+                  </div>
+                  <p className="text-[10px] font-mono opacity-40 italic">
+                    Positive moves forward, negative moves backward.
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setSyncOffset((prev) => (parseFloat(prev || '0') - 0.1).toFixed(3))}
+                    className="flex-1 py-2 border border-[#141414] font-mono text-[10px] uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0]"
+                  >
+                    -0.1s
+                  </button>
+                  <button 
+                    onClick={() => setSyncOffset((prev) => (parseFloat(prev || '0') + 0.1).toFixed(3))}
+                    className="flex-1 py-2 border border-[#141414] font-mono text-[10px] uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0]"
+                  >
+                    +0.1s
+                  </button>
+                </div>
+
+                <button 
+                  onClick={handleSyncSubtitles}
+                  className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all"
+                >
+                  Apply Sync
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Time Sync Modal */}
+      <AnimatePresence>
+        {showSyncModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSyncModal(false)}
+              className="absolute inset-0 bg-[#141414]/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-[#E4E3E0] w-full max-w-md p-8 rounded-sm shadow-2xl border border-[#141414]"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="font-serif italic text-2xl">Sync Subtitles</h3>
+                <button onClick={() => setShowSyncModal(false)} className="opacity-50 hover:opacity-100">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="space-y-6">
+                <p className="text-xs font-mono uppercase tracking-widest opacity-60">
+                  Shift all subtitles forward or backward in time.
+                </p>
+                
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-widest font-mono opacity-50">Offset (seconds)</label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="number"
+                      step="0.1"
+                      value={syncOffset}
+                      onChange={(e) => setSyncOffset(e.target.value)}
+                      className="flex-1 bg-transparent border border-[#141414] p-3 font-mono text-lg focus:outline-none"
+                      placeholder="e.g. 1.5 or -0.5"
+                    />
+                  </div>
+                  <p className="text-[10px] font-mono opacity-40 italic">
+                    Positive moves forward, negative moves backward.
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setSyncOffset((prev) => (parseFloat(prev || '0') - 0.1).toFixed(3))}
+                    className="flex-1 py-2 border border-[#141414] font-mono text-[10px] uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0]"
+                  >
+                    -0.1s
+                  </button>
+                  <button 
+                    onClick={() => setSyncOffset((prev) => (parseFloat(prev || '0') + 0.1).toFixed(3))}
+                    className="flex-1 py-2 border border-[#141414] font-mono text-[10px] uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0]"
+                  >
+                    +0.1s
+                  </button>
+                </div>
+
+                <button 
+                  onClick={handleSyncSubtitles}
+                  className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all"
+                >
+                  Apply Sync
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
