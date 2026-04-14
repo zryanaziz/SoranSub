@@ -407,7 +407,7 @@ export default function App() {
         setProgress(Math.round((completedSteps / totalSteps) * 100));
         
         if (i + batchSize * concurrency < indices.length) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 60));
         }
       }
 
@@ -447,7 +447,7 @@ export default function App() {
           setProgress(Math.round((completedSteps / totalSteps) * 100));
           
           if (i + batchSize * concurrency < indices.length) {
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 60));
           }
         }
       }
