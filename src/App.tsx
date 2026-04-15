@@ -903,7 +903,7 @@ export default function App() {
                       )}>
                         {item.text}
                       </div>
-                      <div className="p-2 md:p-3 text-xs md:text-sm line-clamp-2 italic font-serif">
+                      <div className="p-2 md:p-3 text-xs md:text-sm line-clamp-2 italic font-serif" dir="auto">
                         {item.translatedText || <span className="opacity-30">...</span>}
                       </div>
                     </div>
@@ -975,7 +975,7 @@ export default function App() {
                         onChange={(e) => handleUpdateText(currentSubtitle.id, e.target.value, true)}
                         placeholder="Type translation here..."
                         className="bg-transparent text-yellow-400 text-sm md:text-lg font-serif italic w-full border-none focus:outline-none resize-none text-center min-w-[200px]"
-                        dir="rtl"
+                        dir="auto"
                         rows={2}
                       />
                     </div>
@@ -1120,7 +1120,7 @@ export default function App() {
                         "w-full h-20 md:h-24 bg-white border border-[#141414] p-3 md:p-4 text-sm md:text-base font-serif italic focus:outline-none focus:ring-1 focus:ring-[#141414] resize-none transition-all",
                         selectedIndex !== null && "ring-1 md:ring-2 ring-[#141414] ring-offset-1 md:ring-offset-2"
                       )}
-                      dir="rtl"
+                      dir="auto"
                     />
                   </div>
                 </div>
