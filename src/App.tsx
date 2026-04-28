@@ -295,8 +295,8 @@ export default function App() {
   const jumpToTime = (seconds: number) => {
     if (videoRef.current) {
       videoRef.current.currentTime = seconds;
-      videoRef.current.play();
-      setIsPlaying(true);
+      // videoRef.current.play();
+      setIsPlaying(false);
     }
   };
 
@@ -313,11 +313,6 @@ export default function App() {
       const activeIdx = subtitles.findIndex(s => time >= s.startTimeSeconds && time <= s.endTimeSeconds);
       if (activeIdx !== -1 && activeIdx !== selectedIndex) {
         setSelectedIndex(activeIdx);
-        // Scroll to active item
-        const activeItem = document.getElementById(`sub-${activeIdx}`);
-        if (activeItem && scrollRef.current) {
-          activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
       }
     }
   };
