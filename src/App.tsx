@@ -237,7 +237,7 @@ export default function App() {
         return;
       }
 
-      if (['srt', 'vtt', 'sub'].includes(ext || '')) {
+      if (['srt', 'vtt', 'sub', 'ass'].includes(ext || '')) {
         setFileName(file.name);
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -867,7 +867,7 @@ export default function App() {
             type="file" 
             ref={fileInputRef} 
             className="hidden" 
-            accept=".srt,.vtt,.sub" 
+            accept=".srt,.vtt,.sub,.ass" 
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
                 onDrop([e.target.files[0]]);
