@@ -221,3 +221,11 @@ export function shiftSubtitles(items: SubtitleItem[], offsetSeconds: number): Su
     };
   });
 }
+
+export function stripFormatting(text: string): string {
+  // Removes HTML-like tags (e.g. <font color="...">, <i>, <b>)
+  let cleanText = text.replace(/<[^>]*>/g, '');
+  // Remove leading and trailing dots
+  cleanText = cleanText.replace(/^\.+|\.+$/g, '');
+  return cleanText;
+}

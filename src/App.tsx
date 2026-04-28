@@ -26,20 +26,23 @@ import {
   Sparkles,
   Clock,
   Type,
-  ChevronRight
+  ChevronRight,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import { SubtitleItem } from './types';
-import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime } from './lib/subtitle-utils';
+import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stripFormatting } from './lib/subtitle-utils';
 import { 
   translateBatch, 
   translateToKurdishSorani, 
   refineBatch, 
   refineSourceBatch,
-  setManualApiKey 
+  paraphraseBatch,
+  setManualApiKey,
+  summarizeSubtitles
 } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
@@ -67,6 +70,9 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncOffset, setSyncOffset] = useState('0');
+  const [summary, setSummary] = useState<string | null>(null);
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -347,7 +353,7 @@ export default function App() {
       item.id === id 
         ? { 
             ...item, 
-            [isTranslation ? 'translatedText' : 'text']: text
+            [isTranslation ? 'translatedText' : 'text']: isTranslation ? stripFormatting(text) : text
           } 
         : item
     ));
@@ -391,7 +397,7 @@ export default function App() {
               translations.forEach((translation, index) => {
                 const originalIdx = currentBatchIndices[index];
                 if (updatedSubtitles[originalIdx]) {
-                  updatedSubtitles[originalIdx].translatedText = translation;
+                  updatedSubtitles[originalIdx].translatedText = stripFormatting(translation);
                 }
               });
             } catch (err: any) {
@@ -431,7 +437,7 @@ export default function App() {
                 refinements.forEach((refinement, index) => {
                   const originalIdx = currentBatchIndices[index];
                   if (updatedSubtitles[originalIdx]) {
-                    updatedSubtitles[originalIdx].translatedText = refinement;
+                    updatedSubtitles[originalIdx].translatedText = stripFormatting(refinement);
                   }
                 });
               } catch (err: any) {
@@ -467,6 +473,72 @@ export default function App() {
   const handleTranslateAll = () => {
     const indices = Array.from({ length: subtitles.length }, (_, i) => i);
     handleProcessSubtitles(indices, true);
+  };
+  
+  const handleParaphraseAll = async () => {
+    if (subtitles.length === 0) return;
+    if (!hasApiKey) {
+      setShowKeyInput(true);
+      setStatus({ type: 'error', message: 'Please set an API key first.' });
+      return;
+    }
+
+    setIsTranslating(true);
+    setProgress(0);
+    const updatedSubtitles = [...subtitles];
+    const indices = subtitles.map((_, idx) => idx).filter(idx => subtitles[idx].translatedText);
+    const totalSteps = indices.length;
+    let completedSteps = 0;
+    const batchSize = 50;
+    const concurrency = 5;
+
+    try {
+      setStatus({ type: 'info', message: 'Paraphrasing all subtitles...' });
+      for (let i = 0; i < indices.length; i += batchSize * concurrency) {
+        const batchPromises = [];
+        
+        for (let c = 0; c < concurrency; c++) {
+          const startIdx = i + (c * batchSize);
+          if (startIdx >= indices.length) break;
+          
+          const endIdx = Math.min(startIdx + batchSize, indices.length);
+          const currentBatchIndices = indices.slice(startIdx, endIdx);
+          const textsToParaphrase = currentBatchIndices.map(idx => updatedSubtitles[idx].translatedText!);
+          
+          batchPromises.push((async () => {
+            try {
+              const paraphrased = await paraphraseBatch(textsToParaphrase);
+              paraphrased.forEach((text, index) => {
+                const originalIdx = currentBatchIndices[index];
+                if (updatedSubtitles[originalIdx]) {
+                  updatedSubtitles[originalIdx].translatedText = stripFormatting(text);
+                }
+              });
+            } catch (err: any) {
+              console.error("Batch error:", err);
+              throw err;
+            }
+          })());
+        }
+        
+        await Promise.all(batchPromises);
+        setSubtitles([...updatedSubtitles]);
+        completedSteps += Math.min(batchSize * concurrency, indices.length - i);
+        setProgress(Math.round((completedSteps / totalSteps) * 100));
+        
+        if (i + batchSize * concurrency < indices.length) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+      }
+      setStatus({ type: 'success', message: 'Paraphrasing complete!' });
+      playDing();
+    } catch (err: any) {
+      console.error("Paraphrasing failed:", err);
+      setStatus({ type: 'error', message: `Paraphrasing failed: ${err.message || 'Unknown error'}. Please try again.` });
+    } finally {
+      setIsTranslating(false);
+      setProgress(0);
+    }
   };
   
   const handleRefineOriginal = async () => {
@@ -507,7 +579,7 @@ export default function App() {
                 const originalIdx = currentBatchIndices[index];
                 if (updatedSubtitles[originalIdx]) {
                   // Put the refined result in the translated block as requested
-                  updatedSubtitles[originalIdx].translatedText = refinement;
+                  updatedSubtitles[originalIdx].translatedText = stripFormatting(refinement);
                 }
               });
             } catch (err: any) {
@@ -552,13 +624,62 @@ export default function App() {
     handleProcessSubtitles(remainingIndices, true);
   };
 
+  const handleSummarize = async (useTranslation: boolean) => {
+    if (subtitles.length === 0) return;
+    
+    if (useTranslation && !subtitles.some(s => s.translatedText)) {
+      setStatus({ type: 'error', message: 'No translated text to summarize.' });
+      return;
+    }
+
+    if (!hasApiKey) {
+      setShowKeyInput(true);
+      setStatus({ type: 'error', message: 'Please set an API key first.' });
+      return;
+    }
+
+    setIsSummarizing(true);
+    setStatus({ type: 'info', message: `Summarizing ${useTranslation ? 'translations' : 'original'}...` });
+    
+    try {
+      const texts = subtitles
+        .map(s => useTranslation ? s.translatedText : s.text)
+        .filter(t => t) as string[];
+      
+      const result = await summarizeSubtitles(texts, useTranslation);
+      setSummary(result);
+      setShowSummaryModal(true);
+      setStatus({ type: 'success', message: 'Summary generated.' });
+      playDing();
+    } catch (err: any) {
+      console.error("Summarization failed:", err);
+      setStatus({ type: 'error', message: `Summarization failed: ${err.message || 'Unknown error'}` });
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
+  const handleParaphraseBlock = async () => {
+    if (selectedIndex === null) return;
+    const item = subtitles[selectedIndex];
+    if (!item.translatedText) return;
+    setStatus({ type: 'info', message: 'Paraphrasing block...' });
+    try {
+      const [paraphrased] = await paraphraseBatch([item.translatedText]);
+      handleUpdateText(item.id, stripFormatting(paraphrased), true);
+      setStatus({ type: 'success', message: 'Block paraphrased.' });
+    } catch (err: any) {
+      setStatus({ type: 'error', message: 'Failed to paraphrase block.' });
+    }
+  };
+
   const handleReTranslateBlock = async () => {
     if (selectedIndex === null) return;
     const item = subtitles[selectedIndex];
     setStatus({ type: 'info', message: 'Translating block...' });
     try {
       const translation = await translateToKurdishSorani(item.text);
-      handleUpdateText(item.id, translation, true);
+      handleUpdateText(item.id, stripFormatting(translation), true);
       setStatus({ type: 'success', message: 'Block translated.' });
     } catch (err: any) {
       setStatus({ type: 'error', message: 'Failed to translate block.' });
@@ -576,6 +697,16 @@ export default function App() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleCloseSubtitle = () => {
+    if (window.confirm('Are you sure you want to close the current subtitle file? Any unsaved changes will be lost.')) {
+      setSubtitles([]);
+      setFileName('');
+      setSelectedIndex(null);
+      localStorage.removeItem('soransub_current_session');
+      setStatus({ type: 'info', message: 'Subtitle file closed.' });
+    }
   };
 
   const handleSyncSubtitles = () => {
@@ -657,8 +788,16 @@ export default function App() {
                 </button>
               )}
             </div>
-            <div className="text-[10px] font-mono uppercase opacity-70">
+            <div className="text-[10px] font-mono uppercase opacity-70 flex items-center gap-2">
               {translatedCount}/{subtitles.length} Blocks
+              {subtitles.length > 0 && (
+                <button 
+                  onClick={handleCloseSubtitle}
+                  className="text-red-500 p-1 hover:bg-red-50 rounded-sm"
+                >
+                  <X size={12} />
+                </button>
+              )}
             </div>
             {(subtitles.length > 0 || videoUrl) && (
               <div className="flex border border-[#141414] rounded-sm overflow-hidden mt-1">
@@ -767,6 +906,17 @@ export default function App() {
             Open
           </button>
 
+          {subtitles.length > 0 && (
+            <button 
+              onClick={handleCloseSubtitle}
+              className="flex items-center gap-2 px-3 py-1.5 border border-red-500 text-red-500 text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-red-500 hover:text-white transition-colors"
+              title="Close current subtitle file"
+            >
+              <Trash2 size={12} />
+              Close
+            </button>
+          )}
+
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
           <button 
@@ -792,6 +942,15 @@ export default function App() {
           </button>
 
           <button 
+            onClick={handleParaphraseAll}
+            disabled={isTranslating || subtitles.length === 0}
+            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+          >
+            <Sparkles size={12} />
+            Paraphrase All
+          </button>
+          
+          <button 
             onClick={handleRefineOriginal}
             disabled={isTranslating || subtitles.length === 0}
             className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
@@ -807,6 +966,28 @@ export default function App() {
           >
             <Plus size={12} />
             Translate & Refine Remain
+          </button>
+
+          <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
+
+          <button 
+            onClick={() => handleSummarize(false)}
+            disabled={isSummarizing || subtitles.length === 0}
+            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+            title="Summarize original text"
+          >
+            {isSummarizing ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+            Summarize Original
+          </button>
+
+          <button 
+            onClick={() => handleSummarize(true)}
+            disabled={isSummarizing || subtitles.length === 0 || translatedCount === 0}
+            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+            title="Summarize translated text"
+          >
+            {isSummarizing ? <Loader2 size={12} className="animate-spin" /> : <Languages size={12} />}
+            Summarize Kurdish
           </button>
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
@@ -1087,6 +1268,14 @@ export default function App() {
                     title="Re-translate this block"
                   >
                     <Languages size={14} />
+                  </button>
+                  <button 
+                    onClick={handleParaphraseBlock}
+                    disabled={isTranslating}
+                    className="p-2 border border-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30"
+                    title="Paraphrase this block"
+                  >
+                    <Sparkles size={14} />
                   </button>
                 </div>
 
@@ -1400,6 +1589,58 @@ export default function App() {
                   className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all"
                 >
                   Apply Sync
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* Summary Modal */}
+      <AnimatePresence>
+        {showSummaryModal && summary && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSummaryModal(false)}
+              className="absolute inset-0 bg-[#141414]/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-[#E4E3E0] w-full max-w-2xl max-h-[80vh] flex flex-col rounded-sm shadow-2xl border border-[#141414]"
+            >
+              <div className="flex items-center justify-between p-6 border-b border-[#141414]">
+                <h3 className="font-serif italic text-2xl flex items-center gap-3">
+                  <FileText size={24} />
+                  Content Summary
+                </h3>
+                <button onClick={() => setShowSummaryModal(false)} className="opacity-50 hover:opacity-100">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="p-8 overflow-y-auto font-sans leading-relaxed text-sm md:text-base whitespace-pre-line" dir="auto">
+                {summary}
+              </div>
+
+              <div className="p-6 border-t border-[#141414] flex justify-end gap-3">
+                <button 
+                  onClick={() => setShowSummaryModal(false)}
+                  className="px-6 py-2 border border-[#141414] font-mono text-[10px] uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0]"
+                >
+                  Close
+                </button>
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(summary);
+                    setStatus({ type: 'success', message: 'Summary copied to clipboard.' });
+                  }}
+                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] font-mono text-[10px] uppercase tracking-widest hover:opacity-90"
+                >
+                  Copy All
                 </button>
               </div>
             </motion.div>

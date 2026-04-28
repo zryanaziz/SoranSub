@@ -168,6 +168,38 @@ export async function refineBatch(texts: string[]): Promise<string[]> {
   });
 }
 
+export async function paraphraseBatch(texts: string[]): Promise<string[]> {
+  return withRetry(async () => {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: `You are a professional Kurdish Sorani writer.
+      Rewrite the following ${texts.length} translated subtitle lines to be more natural, idiomatic, and expressive while maintaining the original meaning.
+      
+      RULES:
+      1. Paraphrase for better flow and natural expression.
+      2. Return a JSON array of strings.
+      3. The output array MUST have exactly ${texts.length} elements.
+      4. Maintain the exact order of the input.
+      
+      INPUT: ${JSON.stringify(texts)}`,
+      config: {
+        systemInstruction: "You are a professional Kurdish Sorani writer. Rewrite subtitles to be more natural and idiomatic.",
+        responseMimeType: "application/json",
+        responseSchema: BATCH_SCHEMA,
+      }
+    });
+
+    const result = extractJson(response.text || "[]");
+    if (Array.isArray(result) && result.length === texts.length) {
+      return result;
+    }
+    
+    console.warn(`Batch mismatch: expected ${texts.length}, got ${result?.length}`);
+    return texts;
+  });
+}
+
 export async function refineSourceBatch(texts: string[]): Promise<string[]> {
   return withRetry(async () => {
     const ai = getAI();
@@ -197,5 +229,33 @@ export async function refineSourceBatch(texts: string[]): Promise<string[]> {
     
     console.warn(`Batch mismatch: expected ${texts.length}, got ${result?.length}`);
     return texts;
+  });
+}
+
+/**
+ * Summarize the entire subtitle content.
+ */
+export async function summarizeSubtitles(texts: string[], isTranslated: boolean = false): Promise<string> {
+  return withRetry(async () => {
+    const ai = getAI();
+    // Use a reasonable chunk of text for summarization to avoid token limits but get enough context
+    const combinedText = texts.slice(0, 800).join(' '); 
+    const languageName = isTranslated ? "Kurdish Sorani" : "English";
+    
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: `You are provided with the text of a movie/video's subtitles in ${languageName}.
+      Provide a comprehensive but concise summary of the content (approx. 2-4 paragraphs).
+      
+      The summary should be written in ${isTranslated ? 'Kurdish Sorani' : 'English'}.
+      
+      SUBTITLE CONTENT:
+      ${combinedText}`,
+      config: {
+        systemInstruction: `You are a professional content summarizer. Write a clear, high-quality summary in ${isTranslated ? 'Kurdish Sorani' : 'English'}.`
+      }
+    });
+
+    return response.text || "Could not generate summary.";
   });
 }
