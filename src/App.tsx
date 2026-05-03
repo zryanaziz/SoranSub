@@ -928,8 +928,17 @@ export default function App() {
             disabled={isTranslating || isSummarizing || subtitles.length === 0}
             className="w-[280px] h-[30px] flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[9px] uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
           >
-            <Sparkles size={12} />
-            Translate, Refine & Paraphrase All
+            {isTranslating ? (
+              <>
+                <Loader2 size={12} className="animate-spin" />
+                {progress}%
+              </>
+            ) : (
+              <>
+                <Sparkles size={12} />
+                Translate, Refine & Paraphrase All
+              </>
+            )}
           </button>
 
           <div className="flex items-center gap-2">
