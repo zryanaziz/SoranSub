@@ -73,6 +73,24 @@ export default function App() {
   const [summary, setSummary] = useState<string | null>(null);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [selectedAction, setSelectedAction] = useState<string>('');
+
+  const handleGo = () => {
+    switch (selectedAction) {
+      case 'translateAll': handleTranslateAll(); break;
+      case 'translateRefineParaphraseAll': handleTranslateRefineParaphraseAll(); break;
+      case 'paraphraseAll': handleParaphraseAll(); break;
+      case 'refineOriginal': handleRefineOriginal(); break;
+      case 'translateRemaining': handleTranslateRemaining(); break;
+      case 'summarizeOriginal': handleSummarize(false); break;
+      case 'summarizeKurdish': handleSummarize(true); break;
+      case 'sync': setShowSyncModal(true); break;
+      case 'selectVideo': videoFileInputRef.current?.click(); break;
+      case 'paraphraseBlock': handleParaphraseBlock(); break;
+      default: break;
+    }
+    setSelectedAction('');
+  };
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -467,7 +485,12 @@ export default function App() {
 
   const handleTranslateAll = () => {
     const indices = Array.from({ length: subtitles.length }, (_, i) => i);
-    handleProcessSubtitles(indices, true);
+    return handleProcessSubtitles(indices, true);
+  };
+  
+  const handleTranslateRefineParaphraseAll = async () => {
+    await handleTranslateAll();
+    await handleParaphraseAll();
   };
   
   const handleParaphraseAll = async () => {
@@ -876,23 +899,9 @@ export default function App() {
             accept="video/*" 
             onChange={handleVideoUpload}
           />
-          <button 
-            onClick={() => videoFileInputRef.current?.click()}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0]"
-          >
-            <Video size={12} />
-            Video
-          </button>
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
-          <button 
-            onClick={() => setShowSyncModal(true)}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0]"
-          >
-            <Clock size={12} />
-            Sync
-          </button>
           <button 
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0]"
@@ -915,75 +924,40 @@ export default function App() {
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
           <button 
-            onClick={handleTranslateAll}
-            disabled={isTranslating || subtitles.length === 0}
-            className={cn(
-              "flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono transition-all",
-              "hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:cursor-not-allowed",
-              isTranslating && "bg-[#141414] text-[#E4E3E0]"
-            )}
-          >
-            {isTranslating ? (
-              <>
-                <Loader2 size={12} className="animate-spin" />
-                {progress}%
-              </>
-            ) : (
-              <>
-                <Languages size={12} />
-                Translate & Refine All
-              </>
-            )}
-          </button>
-
-          <button 
-            onClick={handleParaphraseAll}
-            disabled={isTranslating || subtitles.length === 0}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+            onClick={handleTranslateRefineParaphraseAll}
+            disabled={isTranslating || isSummarizing || subtitles.length === 0}
+            className="w-[280px] h-[30px] flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[9px] uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
           >
             <Sparkles size={12} />
-            Paraphrase All
-          </button>
-          
-          <button 
-            onClick={handleRefineOriginal}
-            disabled={isTranslating || subtitles.length === 0}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
-          >
-            <Sparkles size={12} />
-            Refine Original
+            Translate, Refine & Paraphrase All
           </button>
 
-          <button 
-            onClick={handleTranslateRemaining}
-            disabled={isTranslating || subtitles.length === 0 || translatedCount === subtitles.length}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
-          >
-            <Plus size={12} />
-            Translate & Refine Remain
-          </button>
-
-          <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
-
-          <button 
-            onClick={() => handleSummarize(false)}
-            disabled={isSummarizing || subtitles.length === 0}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
-            title="Summarize original text"
-          >
-            {isSummarizing ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-            Summarize Original
-          </button>
-
-          <button 
-            onClick={() => handleSummarize(true)}
-            disabled={isSummarizing || subtitles.length === 0 || translatedCount === 0}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
-            title="Summarize translated text"
-          >
-            {isSummarizing ? <Loader2 size={12} className="animate-spin" /> : <Languages size={12} />}
-            Summarize Kurdish
-          </button>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedAction}
+              onChange={(e) => setSelectedAction(e.target.value)}
+              className="bg-[#E4E3E0] border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono p-1.5 focus:outline-none"
+            >
+              <option value="">Actions...</option>
+              <option value="translateAll">Translate & Refine All</option>
+              <option value="translateRefineParaphraseAll">Translate, Refine & Paraphrase All</option>
+              <option value="paraphraseAll">Paraphrase All</option>
+              <option value="refineOriginal">Refine Original</option>
+              <option value="translateRemaining">Translate & Refine Remain</option>
+              <option value="summarizeOriginal">Summarize Original</option>
+              <option value="summarizeKurdish">Summarize Kurdish</option>
+              <option value="sync">Sync Video</option>
+              <option value="selectVideo">Select Video</option>
+              <option value="paraphraseBlock">Paraphrase Block</option>
+            </select>
+            <button
+              onClick={handleGo}
+              disabled={!selectedAction || isTranslating || isSummarizing || subtitles.length === 0}
+              className="px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+            >
+              Go
+            </button>
+          </div>
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
