@@ -1057,13 +1057,13 @@ export default function App() {
                         {item.index}
                       </div>
                       <div className={cn(
-                        "p-2 md:p-3 border-r border-[#141414] text-xs md:text-sm line-clamp-2",
+                        "p-2 md:p-3 border-r border-[#141414] text-xs md:text-sm line-clamp-2 whitespace-pre-line",
                         isActive ? "border-[#E4E3E0] border-opacity-20" : ""
                       )}>
-                        {item.text}
+                        {item.text.replace(/\\n|\/n/g, '\n')}
                       </div>
-                      <div className="p-2 md:p-3 text-xs md:text-sm line-clamp-2 italic font-serif" dir="auto">
-                        {item.translatedText || <span className="opacity-30">...</span>}
+                      <div className="p-2 md:p-3 text-xs md:text-sm line-clamp-2 italic font-serif whitespace-pre-line" dir="auto">
+                        {item.translatedText ? item.translatedText.replace(/\\n|\/n/g, '\n') : <span className="opacity-30">...</span>}
                       </div>
                     </div>
                   );
@@ -1119,8 +1119,8 @@ export default function App() {
                 {/* Top Overlay: Original Text */}
                 <div className="absolute top-10 left-0 right-0 flex flex-col items-center pointer-events-none px-4 text-center">
                   {currentSubtitle && (
-                    <div className="bg-black bg-opacity-60 px-4 py-2 rounded-sm max-w-[80%]">
-                      <p className="text-white text-sm md:text-base font-sans">{currentSubtitle.text}</p>
+                    <div className="bg-black bg-opacity-60 px-4 py-2 rounded-sm max-w-[80%] whitespace-pre-line">
+                      <p className="text-white text-sm md:text-base font-sans">{currentSubtitle.text.replace(/\\n|\/n/g, '\n')}</p>
                     </div>
                   )}
                 </div>
