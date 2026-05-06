@@ -77,8 +77,6 @@ export default function App() {
 
   const handleGo = () => {
     switch (selectedAction) {
-      case 'translateAll': handleTranslateAll(); break;
-      case 'translateRefineParaphraseAll': handleTranslateRefineParaphraseAll(); break;
       case 'paraphraseAll': handleParaphraseAll(); break;
       case 'refineOriginal': handleRefineOriginal(); break;
       case 'translateRemaining': handleTranslateRemaining(); break;
@@ -485,12 +483,7 @@ export default function App() {
 
   const handleTranslateAll = () => {
     const indices = Array.from({ length: subtitles.length }, (_, i) => i);
-    return handleProcessSubtitles(indices, true);
-  };
-  
-  const handleTranslateRefineParaphraseAll = async () => {
-    await handleTranslateAll();
-    await handleParaphraseAll();
+    handleProcessSubtitles(indices, true);
   };
   
   const handleParaphraseAll = async () => {
@@ -776,6 +769,11 @@ export default function App() {
             </div>
             <div>
               <h1 className="font-serif italic text-lg md:text-xl leading-none">SoranSub</h1>
+              {fileName && (
+                <p className="text-[8px] md:text-[10px] uppercase tracking-widest opacity-70 font-mono italic">
+                  {fileName.substring(0, 20)}{fileName.length > 20 ? '...' : ''}
+                </p>
+              )}
               <p className="text-[8px] md:text-[10px] uppercase tracking-widest opacity-50 font-mono">Kurdish Sorani AI Editor</p>
             </div>
           </div>
@@ -924,9 +922,13 @@ export default function App() {
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
           <button 
-            onClick={handleTranslateRefineParaphraseAll}
-            disabled={isTranslating || isSummarizing || subtitles.length === 0}
-            className="w-[280px] h-[30px] flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[9px] uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+            onClick={handleTranslateAll}
+            disabled={isTranslating || subtitles.length === 0}
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono transition-all",
+              "hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:cursor-not-allowed",
+              isTranslating && "bg-[#141414] text-[#E4E3E0]"
+            )}
           >
             {isTranslating ? (
               <>
@@ -935,10 +937,19 @@ export default function App() {
               </>
             ) : (
               <>
-                <Sparkles size={12} />
-                Translate, Refine & Paraphrase All
+                <Languages size={12} />
+                Translate & Refine All
               </>
             )}
+          </button>
+
+          <button 
+            onClick={handleParaphraseAll}
+            disabled={isTranslating || subtitles.length === 0}
+            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+          >
+            <Sparkles size={12} />
+            Paraphrase All
           </button>
 
           <div className="flex items-center gap-2">
@@ -948,9 +959,6 @@ export default function App() {
               className="bg-[#E4E3E0] border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono p-1.5 focus:outline-none"
             >
               <option value="">Actions...</option>
-              <option value="translateAll">Translate & Refine All</option>
-              <option value="translateRefineParaphraseAll">Translate, Refine & Paraphrase All</option>
-              <option value="paraphraseAll">Paraphrase All</option>
               <option value="refineOriginal">Refine Original</option>
               <option value="translateRemaining">Translate & Refine Remain</option>
               <option value="summarizeOriginal">Summarize Original</option>
@@ -1057,13 +1065,13 @@ export default function App() {
                         {item.index}
                       </div>
                       <div className={cn(
-                        "p-2 md:p-3 border-r border-[#141414] text-xs md:text-sm line-clamp-2 whitespace-pre-line",
+                        "p-2 md:p-3 border-r border-[#141414] text-xs md:text-sm line-clamp-2",
                         isActive ? "border-[#E4E3E0] border-opacity-20" : ""
                       )}>
-                        {item.text.replace(/\\n|\/n/g, '\n')}
+                        {item.text}
                       </div>
-                      <div className="p-2 md:p-3 text-xs md:text-sm line-clamp-2 italic font-serif whitespace-pre-line" dir="auto">
-                        {item.translatedText ? item.translatedText.replace(/\\n|\/n/g, '\n') : <span className="opacity-30">...</span>}
+                      <div className="p-2 md:p-3 text-xs md:text-sm line-clamp-2 italic font-serif" dir="auto">
+                        {item.translatedText || <span className="opacity-30">...</span>}
                       </div>
                     </div>
                   );
@@ -1119,8 +1127,8 @@ export default function App() {
                 {/* Top Overlay: Original Text */}
                 <div className="absolute top-10 left-0 right-0 flex flex-col items-center pointer-events-none px-4 text-center">
                   {currentSubtitle && (
-                    <div className="bg-black bg-opacity-60 px-4 py-2 rounded-sm max-w-[80%] whitespace-pre-line">
-                      <p className="text-white text-sm md:text-base font-sans">{currentSubtitle.text.replace(/\\n|\/n/g, '\n')}</p>
+                    <div className="bg-black bg-opacity-60 px-4 py-2 rounded-sm max-w-[80%]">
+                      <p className="text-white text-sm md:text-base font-sans">{currentSubtitle.text}</p>
                     </div>
                   )}
                 </div>
@@ -1133,7 +1141,7 @@ export default function App() {
                         value={currentSubtitle.translatedText || ''}
                         onChange={(e) => handleUpdateText(currentSubtitle.id, e.target.value, true)}
                         placeholder="Type translation here..."
-                        className="bg-transparent text-yellow-400 text-sm md:text-lg font-serif italic w-full border-none focus:outline-none resize-none text-center min-w-[200px]"
+                        className="bg-transparent text-yellow-400 text-[22px] font-bold font-sans w-full border-none focus:outline-none resize-none text-center min-w-[200px]"
                         dir="auto"
                         rows={2}
                       />
@@ -1284,7 +1292,7 @@ export default function App() {
                       onChange={(e) => handleUpdateText(selectedItem.id, e.target.value, true)}
                       placeholder="Translation will appear here..."
                       className={cn(
-                        "w-full h-20 md:h-24 bg-white border border-[#141414] p-3 md:p-4 text-sm md:text-base font-serif italic focus:outline-none focus:ring-1 focus:ring-[#141414] resize-none transition-all",
+                        "w-full h-20 md:h-24 bg-white border border-[#141414] p-3 md:p-4 text-[22px] text-center font-bold font-sans focus:outline-none focus:ring-1 focus:ring-[#141414] resize-none transition-all",
                         selectedIndex !== null && "ring-1 md:ring-2 ring-[#141414] ring-offset-1 md:ring-offset-2"
                       )}
                       dir="auto"
