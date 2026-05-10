@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Return ONLY the translation.";
+const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
 const MODEL = "gemini-3-flash-preview";
 
 // Helper to extract JSON from potentially messy model output
@@ -100,7 +100,7 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
       }
     });
 
-    return response.text || text;
+    return (response.text || text).replace(/\\n/g, '\n');
   });
 }
 
@@ -117,6 +117,8 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
       2. The output array MUST have exactly ${texts.length} elements.
       3. Maintain the exact order of the input.
       4. If a line is empty or just punctuation, keep it as is.
+      5. PRESERVE NEWLINES: If an input string has a line break, the translation MUST also have a line break at a natural point. Do not remove line breaks.
+      6. NO LITERAL ESCAPES: Do not return literal '\n' characters in the text. Use actual newlines in your response strings.
       
       INPUT: ${JSON.stringify(texts)}`,
       config: {
@@ -128,10 +130,10 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
 
     const result = extractJson(response.text || "[]");
     if (Array.isArray(result) && result.length === texts.length) {
-      return result;
+      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
     }
     
-    console.warn(`Batch mismatch: expected ${texts.length}, got ${result?.length}`);
+    console.warn(`Batch mismatch for translateBatch: expected ${texts.length}, got ${result?.length}`);
     return texts;
   });
 }
@@ -149,6 +151,7 @@ export async function refineBatch(texts: string[]): Promise<string[]> {
       2. Return a JSON array of strings.
       3. The output array MUST have exactly ${texts.length} elements.
       4. Maintain the exact order of the input.
+      5. PRESERVE NEWLINES: If an input string has a line break, keep it in the refined version. Do not merge lines unless it significantly improves readability.
       
       INPUT: ${JSON.stringify(texts)}`,
       config: {
@@ -160,10 +163,10 @@ export async function refineBatch(texts: string[]): Promise<string[]> {
 
     const result = extractJson(response.text || "[]");
     if (Array.isArray(result) && result.length === texts.length) {
-      return result;
+      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
     }
     
-    console.warn(`Batch mismatch: expected ${texts.length}, got ${result?.length}`);
+    console.warn(`Batch mismatch for refineBatch: expected ${texts.length}, got ${result?.length}`);
     return texts;
   });
 }
@@ -181,6 +184,7 @@ export async function paraphraseBatch(texts: string[]): Promise<string[]> {
       2. Return a JSON array of strings.
       3. The output array MUST have exactly ${texts.length} elements.
       4. Maintain the exact order of the input.
+      5. PRESERVE NEWLINES: Maintain any existing line breaks within a subtitle block. Do not merge multiple lines into one unless requested.
       
       INPUT: ${JSON.stringify(texts)}`,
       config: {
@@ -192,10 +196,10 @@ export async function paraphraseBatch(texts: string[]): Promise<string[]> {
 
     const result = extractJson(response.text || "[]");
     if (Array.isArray(result) && result.length === texts.length) {
-      return result;
+      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
     }
     
-    console.warn(`Batch mismatch: expected ${texts.length}, got ${result?.length}`);
+    console.warn(`Batch mismatch for paraphraseBatch: expected ${texts.length}, got ${result?.length}`);
     return texts;
   });
 }
@@ -224,10 +228,10 @@ export async function refineSourceBatch(texts: string[]): Promise<string[]> {
 
     const result = extractJson(response.text || "[]");
     if (Array.isArray(result) && result.length === texts.length) {
-      return result;
+      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
     }
     
-    console.warn(`Batch mismatch: expected ${texts.length}, got ${result?.length}`);
+    console.warn(`Batch mismatch for refineSourceBatch: expected ${texts.length}, got ${result?.length}`);
     return texts;
   });
 }
@@ -256,6 +260,6 @@ export async function summarizeSubtitles(texts: string[], isTranslated: boolean 
       }
     });
 
-    return response.text || "Could not generate summary.";
+    return (response.text || "Could not generate summary.").replace(/\\n/g, '\n');
   });
 }
