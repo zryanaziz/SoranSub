@@ -768,13 +768,19 @@ export default function App() {
               <Languages size={24} className="hidden md:block" />
             </div>
             <div>
-              <h1 className="font-serif italic text-lg md:text-xl leading-none">SoranSub</h1>
               {fileName && (
-                <p className="text-[8px] md:text-[10px] uppercase tracking-widest opacity-70 font-mono italic">
-                  {fileName.substring(0, 20)}{fileName.length > 20 ? '...' : ''}
+                <p className="font-mono text-[10px] md:text-xs uppercase tracking-widest font-bold leading-tight">
+                  {fileName}
                 </p>
               )}
-              <p className="text-[8px] md:text-[10px] uppercase tracking-widest opacity-50 font-mono">Kurdish Sorani AI Editor</p>
+              {subtitles.length > 0 && (
+                <p className="text-[8px] md:text-[10px] uppercase tracking-widest opacity-60 font-mono leading-tight mt-1">
+                  Progress: {translatedCount} / {subtitles.length} ({Math.round((translatedCount / subtitles.length) * 100)}%)
+                </p>
+              )}
+              {subtitles.length === 0 && !fileName && (
+                <p className="text-[10px] md:text-xs font-serif italic">SoranSub Kurdish AI</p>
+              )}
             </div>
           </div>
 
@@ -844,12 +850,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="hidden md:flex flex-col items-center px-4 border-x border-[#141414] border-opacity-10">
-          <div className="text-[10px] font-mono uppercase opacity-50 tracking-widest mb-1">Progress</div>
-          <div className="text-lg font-serif italic">
-            {translatedCount} <span className="text-xs opacity-50 not-italic font-mono uppercase">of</span> {subtitles.length}
-          </div>
-        </div>
+
 
         <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
           <div className="flex gap-2">
@@ -872,10 +873,10 @@ export default function App() {
             ) : (
               <button 
                 onClick={() => setShowKeyInput(true)}
-                className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-50 hover:opacity-100"
+                className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] text-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-50 hover:opacity-100"
+                title="API Key Settings"
               >
-                <Sparkles size={12} />
-                Key
+                <Sparkles size={14} />
               </button>
             )}
           </div>
@@ -902,20 +903,19 @@ export default function App() {
 
           <button 
             onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0]"
+            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+            title="Open Subtitle File"
           >
-            <Upload size={12} />
-            Open
+            <Upload size={14} />
           </button>
 
           {subtitles.length > 0 && (
             <button 
               onClick={handleCloseSubtitle}
-              className="flex items-center gap-2 px-3 py-1.5 border border-red-500 text-red-500 text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-red-500 hover:text-white transition-colors"
+              className="flex items-center justify-center p-1.5 md:p-2 border border-red-500 text-red-500 hover:bg-red-500 hover:text-white transition-colors"
               title="Close current subtitle file"
             >
-              <Trash2 size={12} />
-              Close
+              <Trash2 size={14} />
             </button>
           )}
 
@@ -925,31 +925,29 @@ export default function App() {
             onClick={handleTranslateAll}
             disabled={isTranslating || subtitles.length === 0}
             className={cn(
-              "flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono transition-all",
+              "flex items-center justify-center p-1.5 md:p-2 border border-[#141414] transition-all",
               "hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:cursor-not-allowed",
               isTranslating && "bg-[#141414] text-[#E4E3E0]"
             )}
+            title="Translate & Refine All"
           >
             {isTranslating ? (
-              <>
-                <Loader2 size={12} className="animate-spin" />
-                {progress}%
-              </>
+              <div className="flex items-center gap-1">
+                <Loader2 size={14} className="animate-spin" />
+                <span className="text-[8px] font-mono">{progress}%</span>
+              </div>
             ) : (
-              <>
-                <Languages size={12} />
-                Translate & Refine All
-              </>
+              <Languages size={14} />
             )}
           </button>
 
           <button 
             onClick={handleParaphraseAll}
             disabled={isTranslating || subtitles.length === 0}
-            className="flex items-center gap-2 px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-colors"
+            title="Paraphrase All"
           >
-            <Sparkles size={12} />
-            Paraphrase All
+            <Sparkles size={14} />
           </button>
 
           <div className="flex items-center gap-2">
@@ -970,9 +968,10 @@ export default function App() {
             <button
               onClick={handleGo}
               disabled={!selectedAction || isTranslating || isSummarizing || subtitles.length === 0}
-              className="px-3 py-1.5 border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30"
+              className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-colors"
+              title="Execute selected action"
             >
-              Go
+              <Play size={14} fill="currentColor" />
             </button>
           </div>
 
@@ -981,10 +980,10 @@ export default function App() {
           <button 
             onClick={() => handleDownload(true)}
             disabled={subtitles.length === 0}
-            className="flex items-center gap-2 bg-[#141414] text-[#E4E3E0] px-3 py-1.5 text-[10px] md:text-xs uppercase tracking-widest font-mono hover:opacity-90 disabled:opacity-30"
+            className="flex items-center justify-center p-1.5 md:p-2 bg-[#141414] text-[#E4E3E0] hover:opacity-90 disabled:opacity-30 transition-all rounded-sm"
+            title="Save Subtitles"
           >
-            <Download size={12} />
-            Save
+            <Download size={14} />
           </button>
         </div>
       </header>
