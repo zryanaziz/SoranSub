@@ -27,7 +27,8 @@ import {
   Clock,
   Type,
   ChevronRight,
-  FileText
+  FileText,
+  Eraser
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -58,7 +59,7 @@ export default function App() {
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
-  const [activeTab, setActiveTab] = useState<'list' | 'editor' | 'video'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'video'>('list');
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [manualKey, setManualKey] = useState('');
@@ -67,6 +68,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
+  const [replaceQuery, setReplaceQuery] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncOffset, setSyncOffset] = useState('0');
@@ -74,6 +76,113 @@ export default function App() {
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [selectedAction, setSelectedAction] = useState<string>('');
+
+  const handleReplaceNext = () => {
+    if (!searchQuery.trim()) return;
+    
+    const terms = searchQuery.split(',').map(t => t.trim()).filter(t => t.length > 0);
+    if (terms.length === 0) return;
+    const target = terms[0];
+    
+    const escapedSearch = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escapedSearch, 'gi');
+    
+    const startFrom = selectedIndex !== null ? selectedIndex : -1;
+    
+    for (let i = 1; i <= subtitles.length; i++) {
+      const idx = (startFrom + i) % subtitles.length;
+      const item = subtitles[idx];
+      
+      const hasMatch = item.text.match(regex) || (item.translatedText && item.translatedText.match(regex));
+      
+      if (hasMatch) {
+        const newText = item.text.replace(regex, replaceQuery);
+        const newTranslated = item.translatedText ? item.translatedText.replace(regex, replaceQuery) : null;
+        
+        setSubtitles(prev => prev.map((s, sIdx) => sIdx === idx ? { ...s, text: newText, translatedText: newTranslated } : s));
+        setSelectedIndex(idx);
+        
+        const element = document.getElementById(`sub-${idx}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        
+        setStatus({ type: 'success', message: `Replaced in block ${idx + 1}` });
+        return;
+      }
+    }
+    setStatus({ type: 'info', message: 'No matches found.' });
+  };
+
+  const handleReplaceAll = () => {
+    if (!searchQuery.trim()) return;
+    const terms = searchQuery.split(',').map(t => t.trim()).filter(t => t.length > 0);
+    if (terms.length === 0) return;
+    const target = terms[0];
+    
+    const escapedSearch = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escapedSearch, 'gi');
+    let count = 0;
+    
+    const updated = subtitles.map(item => {
+      let localMatched = false;
+      const newText = item.text.replace(regex, () => { 
+        localMatched = true; 
+        count++; 
+        return replaceQuery; 
+      });
+      const newTranslated = item.translatedText ? item.translatedText.replace(regex, () => { 
+        localMatched = true; 
+        count++; 
+        return replaceQuery; 
+      }) : null;
+      return { ...item, text: newText, translatedText: newTranslated };
+    });
+
+    if (count > 0) {
+      setSubtitles(updated);
+      setStatus({ type: 'success', message: `Replaced ${count} occurrences.` });
+    } else {
+      setStatus({ type: 'info', message: 'No matches found to replace.' });
+    }
+  };
+
+  const handleCleanUpSubtitles = () => {
+    if (subtitles.length === 0) return;
+    
+    // Regex for [Square], (Parentheses), and <Tags> and Music Symbols
+    const bracketRegex = /\[[\s\S]*?\]|\([\s\S]*?\)|\♪[\s\S]*?\♪|<[^>]*>|[♪♫]/g;
+    // Identify blocks that contain NO alphanumeric characters
+    const alphaNumericRegex = /[a-zA-Z\u00C0-\u017F\u0600-\u06FF\u0750-\u077F0-9]/;
+    
+    let tagCount = 0;
+    const initialCount = subtitles.length;
+
+    const step1 = subtitles.map(item => {
+      const newText = item.text.replace(bracketRegex, '').replace(/\s+/g, ' ').trim();
+      const newTranslated = item.translatedText ? item.translatedText.replace(bracketRegex, '').replace(/\s+/g, ' ').trim() : null;
+      
+      if (newText !== item.text || newTranslated !== item.translatedText) {
+        tagCount++;
+      }
+      return { ...item, text: newText, translatedText: newTranslated };
+    });
+
+    const final = step1.filter(item => {
+      const hasAlphaOriginal = alphaNumericRegex.test(item.text);
+      const hasAlphaTranslated = item.translatedText ? alphaNumericRegex.test(item.translatedText) : false;
+      return hasAlphaOriginal || hasAlphaTranslated;
+    }).map((s, idx) => ({ ...s, index: idx + 1 }));
+
+    const removedCount = initialCount - final.length;
+    setSubtitles(final);
+    setSelectedIndex(final.length > 0 ? 0 : null);
+    
+    setStatus({ 
+      type: 'success', 
+      message: `Clean Up: Tags stripped from ${tagCount} blocks. ${removedCount > 0 ? `${removedCount} symbol-only blocks removed.` : ''}` 
+    });
+  };
 
   const handleGo = () => {
     switch (selectedAction) {
@@ -85,6 +194,7 @@ export default function App() {
       case 'sync': setShowSyncModal(true); break;
       case 'selectVideo': videoFileInputRef.current?.click(); break;
       case 'paraphraseBlock': handleParaphraseBlock(); break;
+      case 'cleanUp': handleCleanUpSubtitles(); break;
       default: break;
     }
     setSelectedAction('');
@@ -380,7 +490,7 @@ export default function App() {
     }
 
     setIsTranslating(true);
-    setProgress(0);
+    setProgress(5);
     
     const batchSize = 100;
     const concurrency = 5;
@@ -469,13 +579,18 @@ export default function App() {
         }
       }
 
+      setProgress(100);
       setStatus({ type: 'success', message: 'Process complete!' });
       playDing();
-      setShowCompletionModal(true);
+      
+      setTimeout(() => {
+        setShowCompletionModal(true);
+        setIsTranslating(false);
+        setProgress(0);
+      }, 500);
     } catch (err: any) {
       console.error("Process failed:", err);
       setStatus({ type: 'error', message: `Process failed: ${err.message || 'Unknown error'}. Please try again.` });
-    } finally {
       setIsTranslating(false);
       setProgress(0);
     }
@@ -495,7 +610,7 @@ export default function App() {
     }
 
     setIsTranslating(true);
-    setProgress(0);
+    setProgress(5);
     const updatedSubtitles = [...subtitles];
     const indices = subtitles.map((_, idx) => idx).filter(idx => subtitles[idx].translatedText);
     const totalSteps = indices.length;
@@ -541,12 +656,16 @@ export default function App() {
           await new Promise(resolve => setTimeout(resolve, 300));
         }
       }
+      setProgress(100);
       setStatus({ type: 'success', message: 'Paraphrasing complete!' });
       playDing();
+      setTimeout(() => {
+        setIsTranslating(false);
+        setProgress(0);
+      }, 500);
     } catch (err: any) {
       console.error("Paraphrasing failed:", err);
       setStatus({ type: 'error', message: `Paraphrasing failed: ${err.message || 'Unknown error'}. Please try again.` });
-    } finally {
       setIsTranslating(false);
       setProgress(0);
     }
@@ -562,7 +681,7 @@ export default function App() {
     }
 
     setIsTranslating(true);
-    setProgress(0);
+    setProgress(5);
     
     const batchSize = 50;
     const concurrency = 5;
@@ -606,15 +725,19 @@ export default function App() {
         setProgress(Math.round((currentRefined / totalToRefine) * 100));
         
         if (i + batchSize * concurrency < indicesToRefine.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
       }
+      setProgress(100);
       setStatus({ type: 'success', message: 'Original refinement complete! Results shown in translated column.' });
       playDing();
+      setTimeout(() => {
+        setIsTranslating(false);
+        setProgress(0);
+      }, 500);
     } catch (err: any) {
       console.error("Refinement failed:", err);
       setStatus({ type: 'error', message: `Refinement failed: ${err.message || 'Unknown error'}. Please try again.` });
-    } finally {
       setIsTranslating(false);
       setProgress(0);
     }
@@ -650,6 +773,8 @@ export default function App() {
     }
 
     setIsSummarizing(true);
+    setIsTranslating(true); // Trigger progress bar
+    setProgress(50);
     setStatus({ type: 'info', message: `Summarizing ${useTranslation ? 'translations' : 'original'}...` });
     
     try {
@@ -657,14 +782,24 @@ export default function App() {
         .map(s => useTranslation ? s.translatedText : s.text)
         .filter(t => t) as string[];
       
+      setProgress(70);
       const result = await summarizeSubtitles(texts, useTranslation);
+      
+      setProgress(100);
       setSummary(result);
       setShowSummaryModal(true);
       setStatus({ type: 'success', message: 'Summary generated.' });
       playDing();
+      
+      setTimeout(() => {
+        setIsTranslating(false);
+        setProgress(0);
+      }, 500);
     } catch (err: any) {
       console.error("Summarization failed:", err);
       setStatus({ type: 'error', message: `Summarization failed: ${err.message || 'Unknown error'}` });
+      setIsTranslating(false);
+      setProgress(0);
     } finally {
       setIsSummarizing(false);
     }
@@ -741,10 +876,49 @@ export default function App() {
     }
   };
 
-  const filteredSubtitles = subtitles.filter(s => 
-    s.text.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    (s.translatedText && s.translatedText.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredSubtitles = React.useMemo(() => {
+    if (!searchQuery.trim()) return subtitles;
+
+    const keywords = searchQuery.split(',')
+      .map(k => k.trim().toLowerCase())
+      .filter(k => k.length > 0);
+
+    if (keywords.length === 0) return subtitles;
+
+    // Filter to find items that match ALL keywords
+    const matches = subtitles.filter(s => {
+      const original = s.text.toLowerCase();
+      const kurdish = (s.translatedText || '').toLowerCase();
+      return keywords.every(kw => original.includes(kw) || kurdish.includes(kw));
+    });
+
+    // Sort: Exact/Clean matches first, then partial matches
+    return [...matches].sort((a, b) => {
+      const getScore = (item: SubtitleItem) => {
+        const text = item.text.toLowerCase();
+        const translated = (item.translatedText || '').toLowerCase();
+        
+        const normalize = (str: string) => str.replace(/[^a-z0-9]/g, '');
+        const normA = normalize(text);
+        const normB = normalize(translated);
+        const normSearch = normalize(keywords.join(''));
+        
+        // Tier 1: Perfect match (ignoring non-alphanumeric)
+        if (normA === normSearch || normB === normSearch) return 0;
+        
+        // Tier 2: Partial matches
+        return 1;
+      };
+
+      const scoreA = getScore(a);
+      const scoreB = getScore(b);
+      
+      if (scoreA !== scoreB) return scoreA - scoreB;
+      
+      // If scores are equal, maintain temporal order (index)
+      return a.index - b.index;
+    });
+  }, [subtitles, searchQuery]);
 
   const currentSubtitle = subtitles.find(s => currentTime >= s.startTimeSeconds && currentTime <= s.endTimeSeconds);
   const selectedItem = selectedIndex !== null ? subtitles[selectedIndex] : null;
@@ -758,7 +932,26 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] flex flex-col">
+    <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] flex flex-col relative">
+      {/* Global Progress Bar */}
+      <AnimatePresence>
+        {isTranslating && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed top-0 left-0 right-0 h-1.5 md:h-2 bg-[#141414] z-[100] origin-left overflow-hidden shadow-sm"
+          >
+            <motion.div 
+              className="h-full bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.8)]"
+              initial={{ width: "0%" }}
+              animate={{ width: `${progress}%` }}
+              transition={{ ease: "easeOut", duration: 0.3 }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <header className="border-b border-[#141414] px-4 md:px-6 py-3 md:py-4 flex flex-col md:flex-row items-center justify-between sticky top-0 bg-[#E4E3E0] z-20 gap-4">
         <div className="flex items-center justify-between w-full md:w-auto">
@@ -827,16 +1020,8 @@ export default function App() {
                   onClick={() => setActiveTab('list')}
                   className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors", activeTab === 'list' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5")}
                 >
-                  {isMobileView ? 'List' : 'Split View'}
+                  List
                 </button>
-                {subtitles.length > 0 && (
-                  <button 
-                    onClick={() => setActiveTab('editor')}
-                    className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors", activeTab === 'editor' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5")}
-                  >
-                    Editor
-                  </button>
-                )}
                 {videoUrl && (
                   <button 
                     onClick={() => setActiveTab('video')}
@@ -922,6 +1107,15 @@ export default function App() {
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
           <button 
+            onClick={handleCleanUpSubtitles}
+            disabled={subtitles.length === 0}
+            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30"
+            title="Master Clean Up (Tags & Symbols)"
+          >
+            <Eraser size={14} />
+          </button>
+
+          <button 
             onClick={handleTranslateAll}
             disabled={isTranslating || subtitles.length === 0}
             className={cn(
@@ -950,6 +1144,8 @@ export default function App() {
             <Sparkles size={14} />
           </button>
 
+          <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
+
           <div className="flex items-center gap-2">
             <select
               value={selectedAction}
@@ -964,6 +1160,7 @@ export default function App() {
               <option value="sync">Sync Video</option>
               <option value="selectVideo">Select Video</option>
               <option value="paraphraseBlock">Paraphrase Block</option>
+              <option value="cleanUp">Master Clean Up (SDH/Symbols)</option>
             </select>
             <button
               onClick={handleGo}
@@ -1010,15 +1207,15 @@ export default function App() {
             </div>
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="p-3 border-b border-[#141414] bg-[#F0EFED] flex items-center gap-3">
+              <div className="p-3 border-b border-[#141414] bg-[#F0EFED] flex flex-col gap-2">
                 <div className="relative flex-1">
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-30" />
                   <input 
                     type="text"
-                    placeholder="Search subtitles..."
+                    placeholder="Search keywords (use comma for multiple)..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-8 py-1.5 bg-transparent border border-[#141414] border-opacity-20 text-xs font-mono focus:outline-none focus:border-opacity-100"
+                    className="w-full pl-9 pr-8 py-2 bg-transparent border border-[#141414] border-opacity-20 text-xs font-mono focus:outline-none focus:border-opacity-100"
                   />
                   {searchQuery && (
                     <button 
@@ -1028,6 +1225,35 @@ export default function App() {
                       <X size={14} />
                     </button>
                   )}
+                </div>
+
+                <div className="flex gap-2 items-center">
+                  <div className="relative flex-1">
+                    <Type size={14} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-30" />
+                    <input 
+                      type="text"
+                      placeholder="Replace with..."
+                      value={replaceQuery}
+                      onChange={(e) => setReplaceQuery(e.target.value)}
+                      className="w-full pl-9 pr-2 py-1.5 bg-transparent border border-[#141414] border-opacity-20 text-xs font-mono focus:outline-none focus:border-opacity-100 placeholder:opacity-30"
+                    />
+                  </div>
+                  <div className="flex gap-1">
+                    <button 
+                      onClick={handleReplaceNext}
+                      disabled={!searchQuery}
+                      className="px-2 py-1.5 border border-[#141414] text-[10px] uppercase font-mono hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30"
+                    >
+                      Next
+                    </button>
+                    <button 
+                      onClick={handleReplaceAll}
+                      disabled={!searchQuery}
+                      className="px-2 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase font-mono hover:opacity-90 transition-colors disabled:opacity-30"
+                    >
+                      All
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1047,9 +1273,8 @@ export default function App() {
                     <div 
                       key={item.id}
                       id={`sub-${idx}`}
-                      onClick={() => handleSelectItem(idx)}
                       className={cn(
-                        "grid grid-cols-[40px_1fr_1fr] border-b border-[#141414] cursor-pointer transition-colors group relative",
+                        "grid grid-cols-[40px_1fr_1fr] border-b border-[#141414] transition-colors group relative",
                         isActive ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:bg-opacity-5",
                         isCurrentlyPlaying && !isActive && "bg-orange-500 bg-opacity-10"
                       )}
@@ -1057,20 +1282,42 @@ export default function App() {
                       {isCurrentlyPlaying && (
                         <div className="absolute left-0 top-0 bottom-0 w-1 bg-orange-500" />
                       )}
-                      <div className={cn(
-                        "p-2 md:p-3 border-r border-[#141414] font-mono text-[10px] md:text-xs flex items-center justify-center",
-                        isActive ? "border-[#E4E3E0] border-opacity-20" : ""
-                      )}>
+                      <div 
+                        onClick={() => handleSelectItem(idx)}
+                        className={cn(
+                          "p-2 md:p-3 border-r border-[#141414] font-mono text-[10px] md:text-xs flex items-center justify-center cursor-pointer",
+                          isActive ? "border-[#E4E3E0] border-opacity-20" : ""
+                        )}
+                      >
                         {item.index}
                       </div>
                       <div className={cn(
-                        "p-2 md:p-3 border-r border-[#141414] text-xs md:text-sm line-clamp-2",
+                        "p-1 border-r border-[#141414]",
                         isActive ? "border-[#E4E3E0] border-opacity-20" : ""
                       )}>
-                        {item.text}
+                        <textarea 
+                          value={item.text}
+                          onChange={(e) => handleUpdateText(item.id, e.target.value)}
+                          onFocus={() => handleSelectItem(idx)}
+                          className={cn(
+                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed",
+                            isActive ? "text-white placeholder:text-white/30" : "text-[#141414] placeholder:text-black/30"
+                          )}
+                          rows={2}
+                        />
                       </div>
-                      <div className="p-2 md:p-3 text-xs md:text-sm line-clamp-2 italic font-serif" dir="auto">
-                        {item.translatedText || <span className="opacity-30">...</span>}
+                      <div className="p-1 italic font-serif" dir="auto">
+                        <textarea 
+                          value={item.translatedText || ''}
+                          onChange={(e) => handleUpdateText(item.id, e.target.value, true)}
+                          onFocus={() => handleSelectItem(idx)}
+                          placeholder="Type translation..."
+                          className={cn(
+                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed",
+                            isActive ? "text-white placeholder:text-white/30" : "text-[#141414] placeholder:text-black/30"
+                          )}
+                          rows={2}
+                        />
                       </div>
                     </div>
                   );
@@ -1080,17 +1327,16 @@ export default function App() {
           )}
         </div>
 
-        {/* Right Pane: Editor & Video */}
         <div className={cn(
           "bg-[#F0EFED] flex flex-col relative transition-all duration-300",
-          activeTab === 'list' ? (isMobileView ? "w-0 opacity-0 pointer-events-none" : "w-1/2") : "w-full"
+          activeTab === 'list' && !isMobileView ? "w-1/2" : (activeTab === 'video' ? "w-full" : "hidden")
         )}>
           {/* Video Preview Section */}
           <div 
             ref={videoContainerRef}
             className={cn(
               "bg-black relative group transition-all duration-300 flex flex-col items-center justify-center overflow-hidden min-h-[300px] md:min-h-[400px]",
-              activeTab === 'video' ? "flex-1" : (activeTab === 'editor' ? "hidden" : "aspect-video border-b border-[#141414]")
+              activeTab === 'video' ? "flex-1" : "aspect-video border-b border-[#141414]"
             )}
           >
             {videoUrl ? (
@@ -1224,115 +1470,6 @@ export default function App() {
               </div>
             )}
           </div>
-
-          {/* Editor Section */}
-          <div className={cn(
-            "flex-1 flex flex-col transition-all",
-            activeTab === 'video' && "hidden"
-          )}>
-            {selectedItem ? (
-              <div className="flex-1 flex flex-col p-4 md:p-6 gap-4 md:gap-6 overflow-y-auto">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="px-2 py-0.5 md:px-3 md:py-1 bg-[#141414] text-[#E4E3E0] font-mono text-[10px] md:text-xs uppercase tracking-widest">
-                      Block {selectedItem.index}
-                    </div>
-                    <button 
-                      onClick={() => jumpToTime(selectedItem.startTimeSeconds)}
-                      className="flex items-center gap-2 text-[10px] md:text-xs font-mono opacity-50 hover:opacity-100 transition-opacity"
-                    >
-                      <Clock size={12} />
-                      {selectedItem.startTime}
-                    </button>
-                  </div>
-                  
-                  <button 
-                    onClick={handleReTranslateBlock}
-                    disabled={isTranslating}
-                    className="p-2 border border-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30"
-                    title="Re-translate this block"
-                  >
-                    <Languages size={14} />
-                  </button>
-                  <button 
-                    onClick={handleParaphraseBlock}
-                    disabled={isTranslating}
-                    className="p-2 border border-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30"
-                    title="Paraphrase this block"
-                  >
-                    <Sparkles size={14} />
-                  </button>
-                </div>
-
-                <div className="space-y-4 md:space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-[8px] md:text-[10px] uppercase tracking-widest font-mono opacity-50 flex items-center gap-2">
-                      <Type size={10} /> Original Text
-                    </label>
-                    <textarea 
-                      value={selectedItem.text}
-                      onChange={(e) => handleUpdateText(selectedItem.id, e.target.value)}
-                      className="w-full h-20 md:h-24 bg-transparent border border-[#141414] p-3 md:p-4 text-sm md:text-base focus:outline-none focus:ring-1 focus:ring-[#141414] resize-none"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[8px] md:text-[10px] uppercase tracking-widest font-mono opacity-50 flex items-center justify-between">
-                      <span className="flex items-center gap-2"><Languages size={10} /> Kurdish Sorani</span>
-                      <button 
-                        onClick={() => handleUpdateText(selectedItem.id, selectedItem.text, true)}
-                        className="hover:text-[#141414] transition-colors flex items-center gap-1"
-                      >
-                        <Save size={10} /> Copy Original
-                      </button>
-                    </label>
-                    <textarea 
-                      value={selectedItem.translatedText || ''}
-                      onChange={(e) => handleUpdateText(selectedItem.id, e.target.value, true)}
-                      placeholder="Translation will appear here..."
-                      className={cn(
-                        "w-full h-20 md:h-24 bg-white border border-[#141414] p-3 md:p-4 text-[22px] text-center font-bold font-sans focus:outline-none focus:ring-1 focus:ring-[#141414] resize-none transition-all",
-                        selectedIndex !== null && "ring-1 md:ring-2 ring-[#141414] ring-offset-1 md:ring-offset-2"
-                      )}
-                      dir="auto"
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-auto flex gap-2 md:gap-4">
-                  <button 
-                    onClick={() => {
-                      if (selectedIndex !== null && selectedIndex > 0) {
-                        handleSelectItem(selectedIndex - 1);
-                      }
-                    }}
-                    disabled={selectedIndex === 0}
-                    className="flex-1 flex items-center justify-center gap-2 py-2 md:py-3 border border-[#141414] font-mono text-[10px] md:text-xs uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0] transition-all disabled:opacity-30"
-                  >
-                    Prev
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (selectedIndex !== null && selectedIndex < subtitles.length - 1) {
-                        handleSelectItem(selectedIndex + 1);
-                      }
-                    }}
-                    disabled={selectedIndex === subtitles.length - 1}
-                    className="flex-1 flex items-center justify-center gap-2 py-2 md:py-3 bg-[#141414] text-[#E4E3E0] font-mono text-[10px] md:text-xs uppercase tracking-widest hover:opacity-90 transition-all disabled:opacity-30"
-                  >
-                    Next
-                    <ChevronRight size={14} />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center opacity-20 p-8 md:p-12 text-center">
-                <Type size={48} className="mb-4 md:size-64" />
-                <h2 className="font-serif italic text-xl md:text-2xl">Select a block to edit</h2>
-                <p className="text-[10px] md:text-xs font-mono uppercase tracking-widest">or upload a file to begin</p>
-              </div>
-            )}
-          </div>
         </div>
       </main>
 
@@ -1430,79 +1567,6 @@ export default function App() {
               >
                 Continue Editing
               </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Time Sync Modal */}
-      <AnimatePresence>
-        {showSyncModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowSyncModal(false)}
-              className="absolute inset-0 bg-[#141414]/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative bg-[#E4E3E0] w-full max-w-md p-8 rounded-sm shadow-2xl border border-[#141414]"
-            >
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="font-serif italic text-2xl">Sync Subtitles</h3>
-                <button onClick={() => setShowSyncModal(false)} className="opacity-50 hover:opacity-100">
-                  <X size={20} />
-                </button>
-              </div>
-              
-              <div className="space-y-6">
-                <p className="text-xs font-mono uppercase tracking-widest opacity-60">
-                  Shift all subtitles forward or backward in time.
-                </p>
-                
-                <div className="space-y-2">
-                  <label className="text-[10px] uppercase tracking-widest font-mono opacity-50">Offset (seconds)</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="number"
-                      step="0.1"
-                      value={syncOffset}
-                      onChange={(e) => setSyncOffset(e.target.value)}
-                      className="flex-1 bg-transparent border border-[#141414] p-3 font-mono text-lg focus:outline-none"
-                      placeholder="e.g. 1.5 or -0.5"
-                    />
-                  </div>
-                  <p className="text-[10px] font-mono opacity-40 italic">
-                    Positive moves forward, negative moves backward.
-                  </p>
-                </div>
-
-                <div className="flex gap-3">
-                  <button 
-                    onClick={() => setSyncOffset((prev) => (parseFloat(prev || '0') - 0.1).toFixed(3))}
-                    className="flex-1 py-2 border border-[#141414] font-mono text-[10px] uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0]"
-                  >
-                    -0.1s
-                  </button>
-                  <button 
-                    onClick={() => setSyncOffset((prev) => (parseFloat(prev || '0') + 0.1).toFixed(3))}
-                    className="flex-1 py-2 border border-[#141414] font-mono text-[10px] uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0]"
-                  >
-                    +0.1s
-                  </button>
-                </div>
-
-                <button 
-                  onClick={handleSyncSubtitles}
-                  className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all"
-                >
-                  Apply Sync
-                </button>
-              </div>
             </motion.div>
           </div>
         )}
