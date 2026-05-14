@@ -159,8 +159,8 @@ export default function App() {
     const initialCount = subtitles.length;
 
     const step1 = subtitles.map(item => {
-      const newText = item.text.replace(bracketRegex, '').replace(/\s+/g, ' ').trim();
-      const newTranslated = item.translatedText ? item.translatedText.replace(bracketRegex, '').replace(/\s+/g, ' ').trim() : null;
+      const newText = item.text.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim();
+      const newTranslated = item.translatedText ? item.translatedText.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
       
       if (newText !== item.text || newTranslated !== item.translatedText) {
         tagCount++;
