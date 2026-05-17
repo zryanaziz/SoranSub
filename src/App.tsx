@@ -838,7 +838,29 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = fileName || (useTranslation ? 'translated_subtitles.srt' : 'original_subtitles.srt');
+    
+    let downloadName = fileName || (useTranslation ? 'translated_subtitles.srt' : 'original_subtitles.srt');
+    
+    // Inject .ku before extension for better player recognition
+    if (downloadName.includes('.')) {
+      const parts = downloadName.split('.');
+      const ext = parts.pop();
+      
+      // Remove existing language tags if present (e.g., .en, .EN, .fr)
+      if (parts.length > 0) {
+        const lastBasePart = parts[parts.length - 1];
+        // Regex matches common 2-3 letter language codes
+        if (/^[a-z]{2,3}(-[a-z]{2,4})?$/i.test(lastBasePart)) {
+          parts.pop();
+        }
+      }
+      
+      downloadName = parts.join('.') + '.ku.' + ext;
+    } else {
+      downloadName += '.ku.srt';
+    }
+    
+    a.download = downloadName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
