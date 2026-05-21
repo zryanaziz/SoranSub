@@ -28,7 +28,8 @@ import {
   Type,
   ChevronRight,
   FileText,
-  Eraser
+  Eraser,
+  Sliders
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -76,6 +77,17 @@ export default function App() {
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [selectedAction, setSelectedAction] = useState<string>('');
+  const [showRangeModal, setShowRangeModal] = useState(false);
+  const [rangeStart, setRangeStart] = useState<string>('');
+  const [rangeEnd, setRangeEnd] = useState<string>('');
+
+  const handleOpenRangeModal = () => {
+    if (subtitles.length > 0) {
+      setRangeStart('1');
+      setRangeEnd(subtitles.length.toString());
+      setShowRangeModal(true);
+    }
+  };
 
   const handleReplaceNext = () => {
     if (!searchQuery.trim()) return;
@@ -158,9 +170,22 @@ export default function App() {
     let tagCount = 0;
     const initialCount = subtitles.length;
 
+    const cleanHyphens = (str: string): string => {
+      return str
+        .split('\n')
+        .map(line => line.trim().replace(/^[-–—\s]+/g, '').replace(/[-–—\s]+$/g, ''))
+        .join('\n')
+        .trim();
+    };
+
     const step1 = subtitles.map(item => {
-      const newText = item.text.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim();
-      const newTranslated = item.translatedText ? item.translatedText.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
+      let newText = item.text.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim();
+      newText = cleanHyphens(newText);
+      
+      let newTranslated = item.translatedText ? item.translatedText.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
+      if (newTranslated !== null) {
+        newTranslated = cleanHyphens(newTranslated);
+      }
       
       if (newText !== item.text || newTranslated !== item.translatedText) {
         tagCount++;
@@ -180,24 +205,34 @@ export default function App() {
     
     setStatus({ 
       type: 'success', 
-      message: `Clean Up: Tags stripped from ${tagCount} blocks. ${removedCount > 0 ? `${removedCount} symbol-only blocks removed.` : ''}` 
+      message: `Clean Up: Brackets & hyphens stripped from ${tagCount} blocks. ${removedCount > 0 ? `${removedCount} symbol-only blocks removed.` : ''}` 
     });
   };
 
-  const handleGo = () => {
-    switch (selectedAction) {
-      case 'paraphraseAll': handleParaphraseAll(); break;
-      case 'refineOriginal': handleRefineOriginal(); break;
-      case 'translateRemaining': handleTranslateRemaining(); break;
-      case 'summarizeOriginal': handleSummarize(false); break;
-      case 'summarizeKurdish': handleSummarize(true); break;
-      case 'sync': setShowSyncModal(true); break;
-      case 'selectVideo': videoFileInputRef.current?.click(); break;
-      case 'paraphraseBlock': handleParaphraseBlock(); break;
-      case 'cleanUp': handleCleanUpSubtitles(); break;
-      default: break;
+  const handleTranslateAndRefineRange = () => {
+    if (subtitles.length === 0) return;
+    
+    const start = parseInt(rangeStart, 10);
+    const end = parseInt(rangeEnd, 10);
+    
+    if (isNaN(start) || isNaN(end) || start < 1 || end < start || end > subtitles.length) {
+      setStatus({ type: 'error', message: 'Invalid block range. Please check the values.' });
+      return;
     }
-    setSelectedAction('');
+    
+    // Convert 1-indexed range to 0-indexed indices array
+    const indices = [];
+    for (let i = start - 1; i <= end - 1; i++) {
+      indices.push(i);
+    }
+    
+    if (indices.length === 0) {
+      setStatus({ type: 'info', message: 'Range is empty.' });
+      return;
+    }
+    
+    setShowRangeModal(false);
+    handleProcessSubtitles(indices, true);
   };
   
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -671,154 +706,6 @@ export default function App() {
     }
   };
   
-  const handleRefineOriginal = async () => {
-    if (subtitles.length === 0) return;
-
-    if (!hasApiKey) {
-      setShowKeyInput(true);
-      setStatus({ type: 'error', message: 'Please set an API key first.' });
-      return;
-    }
-
-    setIsTranslating(true);
-    setProgress(5);
-    
-    const batchSize = 50;
-    const concurrency = 5;
-    const updatedSubtitles = [...subtitles];
-    const indicesToRefine = subtitles.map((_, idx) => idx);
-    const totalToRefine = indicesToRefine.length;
-    
-    try {
-      setStatus({ type: 'info', message: 'Refining original text...' });
-      for (let i = 0; i < indicesToRefine.length; i += batchSize * concurrency) {
-        const batchPromises = [];
-        
-        for (let c = 0; c < concurrency; c++) {
-          const batchStartIdx = i + (c * batchSize);
-          if (batchStartIdx >= indicesToRefine.length) break;
-          
-          const batchEndIdx = Math.min(batchStartIdx + batchSize, indicesToRefine.length);
-          const currentBatchIndices = indicesToRefine.slice(batchStartIdx, batchEndIdx);
-          const textsToRefine = currentBatchIndices.map(idx => subtitles[idx].text);
-          
-          batchPromises.push((async () => {
-            try {
-              const refinements = await refineSourceBatch(textsToRefine);
-              refinements.forEach((refinement, index) => {
-                const originalIdx = currentBatchIndices[index];
-                if (updatedSubtitles[originalIdx]) {
-                  // Put the refined result in the translated block as requested
-                  updatedSubtitles[originalIdx].translatedText = stripFormatting(refinement);
-                }
-              });
-            } catch (err: any) {
-              console.error("Batch error:", err);
-              throw err;
-            }
-          })());
-        }
-        
-        await Promise.all(batchPromises);
-        setSubtitles([...updatedSubtitles]);
-        const currentRefined = Math.min(i + batchSize * concurrency, indicesToRefine.length);
-        setProgress(Math.round((currentRefined / totalToRefine) * 100));
-        
-        if (i + batchSize * concurrency < indicesToRefine.length) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-      }
-      setProgress(100);
-      setStatus({ type: 'success', message: 'Original refinement complete! Results shown in translated column.' });
-      playDing();
-      setTimeout(() => {
-        setIsTranslating(false);
-        setProgress(0);
-      }, 500);
-    } catch (err: any) {
-      console.error("Refinement failed:", err);
-      setStatus({ type: 'error', message: `Refinement failed: ${err.message || 'Unknown error'}. Please try again.` });
-      setIsTranslating(false);
-      setProgress(0);
-    }
-  };
-  
-  const handleTranslateRemaining = async () => {
-    if (subtitles.length === 0) return;
-    
-    const remainingIndices = subtitles
-      .map((s, idx) => s.translatedText ? -1 : idx)
-      .filter(idx => idx !== -1);
-      
-    if (remainingIndices.length === 0) {
-      setStatus({ type: 'info', message: 'All blocks are already translated.' });
-      return;
-    }
-
-    handleProcessSubtitles(remainingIndices, true);
-  };
-
-  const handleSummarize = async (useTranslation: boolean) => {
-    if (subtitles.length === 0) return;
-    
-    if (useTranslation && !subtitles.some(s => s.translatedText)) {
-      setStatus({ type: 'error', message: 'No translated text to summarize.' });
-      return;
-    }
-
-    if (!hasApiKey) {
-      setShowKeyInput(true);
-      setStatus({ type: 'error', message: 'Please set an API key first.' });
-      return;
-    }
-
-    setIsSummarizing(true);
-    setIsTranslating(true); // Trigger progress bar
-    setProgress(50);
-    setStatus({ type: 'info', message: `Summarizing ${useTranslation ? 'translations' : 'original'}...` });
-    
-    try {
-      const texts = subtitles
-        .map(s => useTranslation ? s.translatedText : s.text)
-        .filter(t => t) as string[];
-      
-      setProgress(70);
-      const result = await summarizeSubtitles(texts, useTranslation);
-      
-      setProgress(100);
-      setSummary(result);
-      setShowSummaryModal(true);
-      setStatus({ type: 'success', message: 'Summary generated.' });
-      playDing();
-      
-      setTimeout(() => {
-        setIsTranslating(false);
-        setProgress(0);
-      }, 500);
-    } catch (err: any) {
-      console.error("Summarization failed:", err);
-      setStatus({ type: 'error', message: `Summarization failed: ${err.message || 'Unknown error'}` });
-      setIsTranslating(false);
-      setProgress(0);
-    } finally {
-      setIsSummarizing(false);
-    }
-  };
-
-  const handleParaphraseBlock = async () => {
-    if (selectedIndex === null) return;
-    const item = subtitles[selectedIndex];
-    if (!item.translatedText) return;
-    setStatus({ type: 'info', message: 'Paraphrasing block...' });
-    try {
-      const [paraphrased] = await paraphraseBatch([item.translatedText]);
-      handleUpdateText(item.id, stripFormatting(paraphrased), true);
-      setStatus({ type: 'success', message: 'Block paraphrased.' });
-    } catch (err: any) {
-      setStatus({ type: 'error', message: 'Failed to paraphrase block.' });
-    }
-  };
-
   const handleReTranslateBlock = async () => {
     if (selectedIndex === null) return;
     const item = subtitles[selectedIndex];
@@ -1168,31 +1055,31 @@ export default function App() {
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedAction}
-              onChange={(e) => setSelectedAction(e.target.value)}
-              className="bg-[#E4E3E0] border border-[#141414] text-[10px] md:text-xs uppercase tracking-widest font-mono p-1.5 focus:outline-none"
-            >
-              <option value="">Actions...</option>
-              <option value="refineOriginal">Refine Original</option>
-              <option value="translateRemaining">Translate & Refine Remain</option>
-              <option value="summarizeOriginal">Summarize Original</option>
-              <option value="summarizeKurdish">Summarize Kurdish</option>
-              <option value="sync">Sync Video</option>
-              <option value="selectVideo">Select Video</option>
-              <option value="paraphraseBlock">Paraphrase Block</option>
-              <option value="cleanUp">Master Clean Up (SDH/Symbols)</option>
-            </select>
-            <button
-              onClick={handleGo}
-              disabled={!selectedAction || isTranslating || isSummarizing || subtitles.length === 0}
-              className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-colors"
-              title="Execute selected action"
-            >
-              <Play size={14} fill="currentColor" />
-            </button>
-          </div>
+          <button 
+            onClick={handleOpenRangeModal}
+            disabled={isTranslating || subtitles.length === 0}
+            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-colors rounded-sm"
+            title="Translate & Refine From Range"
+          >
+            <Sliders size={14} />
+          </button>
+
+          <button 
+            onClick={() => setShowSyncModal(true)}
+            disabled={subtitles.length === 0}
+            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-colors rounded-sm"
+            title="Sync Subtitles (Time Offset)"
+          >
+            <Clock size={14} />
+          </button>
+
+          <button 
+            onClick={() => videoFileInputRef.current?.click()}
+            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors rounded-sm"
+            title="Select Video File"
+          >
+            <Video size={14} />
+          </button>
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
@@ -1660,6 +1547,78 @@ export default function App() {
                   className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all"
                 >
                   Apply Sync
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Range Translate & Refine Modal */}
+      <AnimatePresence>
+        {showRangeModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowRangeModal(false)}
+              className="absolute inset-0 bg-[#141414]/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-[#E4E3E0] w-full max-w-md p-8 rounded-sm shadow-2xl border border-[#141414]"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="font-serif italic text-2xl">Translate from Range</h3>
+                <button onClick={() => setShowRangeModal(false)} className="opacity-50 hover:opacity-100">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="space-y-6">
+                <p className="text-xs font-mono uppercase tracking-widest opacity-60">
+                  Select a specific range of blocks to translate and refine.
+                </p>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest font-mono opacity-50 block">Start Block #</label>
+                    <input 
+                      type="number"
+                      min={1}
+                      max={subtitles.length}
+                      value={rangeStart}
+                      onChange={(e) => setRangeStart(e.target.value)}
+                      className="w-full bg-transparent border border-[#141414] p-3 font-mono text-center text-lg focus:outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest font-mono opacity-50 block">End Block #</label>
+                    <input 
+                      type="number"
+                      min={1}
+                      max={subtitles.length}
+                      value={rangeEnd}
+                      onChange={(e) => setRangeEnd(e.target.value)}
+                      className="w-full bg-transparent border border-[#141414] p-3 font-mono text-center text-lg focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {subtitles.length > 0 && (
+                  <p className="text-[10px] uppercase tracking-widest font-mono text-center text-orange-600 bg-orange-500/10 py-2 border border-orange-500/20 rounded-xs">
+                    This will process {Math.max(0, parseInt(rangeEnd, 10) - parseInt(rangeStart, 10) + 1 || 0)} blocks (out of {subtitles.length}).
+                  </p>
+                )}
+
+                <button 
+                  onClick={handleTranslateAndRefineRange}
+                  className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all"
+                >
+                  Start Translate Range
                 </button>
               </div>
             </motion.div>
