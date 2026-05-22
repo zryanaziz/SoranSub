@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer Subtitle Frame -->
+    <path
+        android:strokeColor="#FFE4E3E0"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M18,34 h72 v40 h-72 z" />
+    <!-- Subtitle text lines inside -->
+    <path
+        android:strokeColor="#FFF97316"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M28,46 h30 M28,56 h52" />
+</vector>
