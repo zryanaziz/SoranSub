@@ -6,14 +6,11 @@ plugins {
 android {
     namespace = "com.subtitleeditor.ku"
     compileSdk = 34
-    compileSdkVersion = 34
 
     defaultConfig {
         applicationId = "com.subtitleeditor.ku"
         minSdk = 26
-        minSdkVersion = 26
         targetSdk = 34
-        targetSdkVersion = 34
         versionCode = 1
         versionName = "1.0.0"
 
