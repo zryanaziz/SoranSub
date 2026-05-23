@@ -80,6 +80,9 @@ export default function App() {
   const [showRangeModal, setShowRangeModal] = useState(false);
   const [rangeStart, setRangeStart] = useState<string>('');
   const [rangeEnd, setRangeEnd] = useState<string>('');
+  const [batchSize, setBatchSize] = useState<number>(100);
+  const [concurrency, setConcurrency] = useState<number>(5);
+  const [delayMs, setDelayMs] = useState<number>(180);
 
   const handleOpenRangeModal = () => {
     if (subtitles.length > 0) {
@@ -170,21 +173,61 @@ export default function App() {
     let tagCount = 0;
     const initialCount = subtitles.length;
 
-    const cleanHyphens = (str: string): string => {
+    const moveHyphens = (str: string): string => {
       return str
         .split('\n')
-        .map(line => line.trim().replace(/^[-–—\s]+/g, '').replace(/[-–—\s]+$/g, ''))
-        .join('\n')
-        .trim();
+        .map(line => {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('-') && !trimmed.endsWith('-')) {
+            const matchStart = trimmed.match(/^(-+)/);
+            if (matchStart) {
+              const count = matchStart[1].length;
+              return trimmed.substring(count).trim() + '-'.repeat(count);
+            }
+          } else if (trimmed.endsWith('-') && !trimmed.startsWith('-')) {
+            const matchEnd = trimmed.match(/(-+)$/);
+            if (matchEnd) {
+              const count = matchEnd[1].length;
+              return '-'.repeat(count) + trimmed.substring(0, trimmed.length - count).trim();
+            }
+          }
+          return line;
+        })
+        .join('\n');
+    };
+
+    const moveExclamationMarks = (str: string): string => {
+      return str
+        .split('\n')
+        .map(line => {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('!') && !trimmed.endsWith('!')) {
+            const matchStart = trimmed.match(/^(!+)/);
+            if (matchStart) {
+              const count = matchStart[1].length;
+              return trimmed.substring(count).trim() + '!'.repeat(count);
+            }
+          } else if (trimmed.endsWith('!') && !trimmed.startsWith('!')) {
+            const matchEnd = trimmed.match(/(!+)$/);
+            if (matchEnd) {
+              const count = matchEnd[1].length;
+              return '!'.repeat(count) + trimmed.substring(0, trimmed.length - count).trim();
+            }
+          }
+          return line;
+        })
+        .join('\n');
     };
 
     const step1 = subtitles.map(item => {
       let newText = item.text.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim();
-      newText = cleanHyphens(newText);
+      newText = moveHyphens(newText);
+      newText = moveExclamationMarks(newText);
       
       let newTranslated = item.translatedText ? item.translatedText.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
       if (newTranslated !== null) {
-        newTranslated = cleanHyphens(newTranslated);
+        newTranslated = moveHyphens(newTranslated);
+        newTranslated = moveExclamationMarks(newTranslated);
       }
       
       if (newText !== item.text || newTranslated !== item.translatedText) {
@@ -205,7 +248,7 @@ export default function App() {
     
     setStatus({ 
       type: 'success', 
-      message: `Clean Up: Brackets & hyphens stripped from ${tagCount} blocks. ${removedCount > 0 ? `${removedCount} symbol-only blocks removed.` : ''}` 
+      message: `Clean Up: Brackets stripped, exclamation marks and hyphens flipped in ${tagCount} blocks. ${removedCount > 0 ? `${removedCount} symbol-only blocks removed.` : ''}` 
     });
   };
 
@@ -527,8 +570,8 @@ export default function App() {
     setIsTranslating(true);
     setProgress(5);
     
-    const batchSize = 100;
-    const concurrency = 5;
+    const currentBatchSize = Math.max(1, batchSize);
+    const currentConcurrency = Math.max(1, concurrency);
     const updatedSubtitles = [...subtitles];
     const totalSteps = shouldRefine ? indices.length * 2 : indices.length;
     let completedSteps = 0;
@@ -536,14 +579,14 @@ export default function App() {
     try {
       // Phase 1: Translation
       setStatus({ type: 'info', message: 'Translating subtitles...' });
-      for (let i = 0; i < indices.length; i += batchSize * concurrency) {
+      for (let i = 0; i < indices.length; i += currentBatchSize * currentConcurrency) {
         const batchPromises = [];
         
-        for (let c = 0; c < concurrency; c++) {
-          const startIdx = i + (c * batchSize);
+        for (let c = 0; c < currentConcurrency; c++) {
+          const startIdx = i + (c * currentBatchSize);
           if (startIdx >= indices.length) break;
           
-          const endIdx = Math.min(startIdx + batchSize, indices.length);
+          const endIdx = Math.min(startIdx + currentBatchSize, indices.length);
           const currentBatchIndices = indices.slice(startIdx, endIdx);
           const textsToTranslate = currentBatchIndices.map(idx => subtitles[idx].text);
           
@@ -565,25 +608,25 @@ export default function App() {
         
         await Promise.all(batchPromises);
         setSubtitles([...updatedSubtitles]);
-        completedSteps += Math.min(batchSize * concurrency, indices.length - i);
+        completedSteps += Math.min(currentBatchSize * currentConcurrency, indices.length - i);
         setProgress(Math.round((completedSteps / totalSteps) * 100));
         
-        if (i + batchSize * concurrency < indices.length) {
-          await new Promise(resolve => setTimeout(resolve, 300));
+        if (i + currentBatchSize * currentConcurrency < indices.length) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
         }
       }
 
       // Phase 2: Refinement
       if (shouldRefine) {
         setStatus({ type: 'info', message: 'Refining translations...' });
-        for (let i = 0; i < indices.length; i += batchSize * concurrency) {
+        for (let i = 0; i < indices.length; i += currentBatchSize * currentConcurrency) {
           const batchPromises = [];
           
-          for (let c = 0; c < concurrency; c++) {
-            const startIdx = i + (c * batchSize);
+          for (let c = 0; c < currentConcurrency; c++) {
+            const startIdx = i + (c * currentBatchSize);
             if (startIdx >= indices.length) break;
             
-            const endIdx = Math.min(startIdx + batchSize, indices.length);
+            const endIdx = Math.min(startIdx + currentBatchSize, indices.length);
             const currentBatchIndices = indices.slice(startIdx, endIdx);
             const textsToRefine = currentBatchIndices.map(idx => updatedSubtitles[idx].translatedText!);
             
@@ -605,11 +648,11 @@ export default function App() {
           
           await Promise.all(batchPromises);
           setSubtitles([...updatedSubtitles]);
-          completedSteps += Math.min(batchSize * concurrency, indices.length - i);
+          completedSteps += Math.min(currentBatchSize * currentConcurrency, indices.length - i);
           setProgress(Math.round((completedSteps / totalSteps) * 100));
           
-          if (i + batchSize * concurrency < indices.length) {
-            await new Promise(resolve => setTimeout(resolve, 300));
+          if (i + currentBatchSize * currentConcurrency < indices.length) {
+            await new Promise(resolve => setTimeout(resolve, delayMs));
           }
         }
       }
@@ -650,19 +693,19 @@ export default function App() {
     const indices = subtitles.map((_, idx) => idx).filter(idx => subtitles[idx].translatedText);
     const totalSteps = indices.length;
     let completedSteps = 0;
-    const batchSize = 50;
-    const concurrency = 5;
+    const currentConcurrency = Math.max(1, concurrency);
+    const currentBatchSize = 50;
 
     try {
       setStatus({ type: 'info', message: 'Paraphrasing all subtitles...' });
-      for (let i = 0; i < indices.length; i += batchSize * concurrency) {
+      for (let i = 0; i < indices.length; i += currentBatchSize * currentConcurrency) {
         const batchPromises = [];
         
-        for (let c = 0; c < concurrency; c++) {
-          const startIdx = i + (c * batchSize);
+        for (let c = 0; c < currentConcurrency; c++) {
+          const startIdx = i + (c * currentBatchSize);
           if (startIdx >= indices.length) break;
           
-          const endIdx = Math.min(startIdx + batchSize, indices.length);
+          const endIdx = Math.min(startIdx + currentBatchSize, indices.length);
           const currentBatchIndices = indices.slice(startIdx, endIdx);
           const textsToParaphrase = currentBatchIndices.map(idx => updatedSubtitles[idx].translatedText!);
           
@@ -684,11 +727,11 @@ export default function App() {
         
         await Promise.all(batchPromises);
         setSubtitles([...updatedSubtitles]);
-        completedSteps += Math.min(batchSize * concurrency, indices.length - i);
+        completedSteps += Math.min(currentBatchSize * currentConcurrency, indices.length - i);
         setProgress(Math.round((completedSteps / totalSteps) * 100));
         
-        if (i + batchSize * concurrency < indices.length) {
-          await new Promise(resolve => setTimeout(resolve, 300));
+        if (i + currentBatchSize * currentConcurrency < indices.length) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
         }
       }
       setProgress(100);
@@ -1613,6 +1656,48 @@ export default function App() {
                     This will process {Math.max(0, parseInt(rangeEnd, 10) - parseInt(rangeStart, 10) + 1 || 0)} blocks (out of {subtitles.length}).
                   </p>
                 )}
+
+                <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+                  <h4 className="text-[10px] uppercase tracking-widest font-mono font-bold flex items-center justify-between">
+                    <span>Range Translation Scheduling</span>
+                    <span className="text-[9px] text-[#141414]/50 normal-case font-normal">(Rate Limit Throttling)</span>
+                  </h4>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[8px] uppercase tracking-wider font-mono opacity-50 block" title="Number of lines translated per API request">Batch Size</label>
+                      <input 
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={batchSize}
+                        onChange={(e) => setBatchSize(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                        className="w-full bg-transparent border border-[#141414] p-2 font-mono text-center text-xs focus:outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[8px] uppercase tracking-wider font-mono opacity-50 block" title="Number of simultaneous API requests">Concurrency</label>
+                      <input 
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={concurrency}
+                        onChange={(e) => setConcurrency(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                        className="w-full bg-transparent border border-[#141414] p-2 font-mono text-center text-xs focus:outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[8px] uppercase tracking-wider font-mono opacity-50 block" title="Time in milliseconds to wait between consecutive batch requests">Time Between (ms)</label>
+                      <input 
+                        type="number"
+                        min={0}
+                        step={50}
+                        value={delayMs}
+                        onChange={(e) => setDelayMs(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                        className="w-full bg-transparent border border-[#141414] p-2 font-mono text-center text-xs focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
 
                 <button 
                   onClick={handleTranslateAndRefineRange}
