@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
-const MODEL = "gemini-3.5-flash";
+const MODEL = "gemini-flash-latest";
 
 // Helper to extract JSON from potentially messy model output
 function extractJson(text: string): any {
