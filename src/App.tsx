@@ -44,7 +44,8 @@ import {
   refineSourceBatch,
   paraphraseBatch,
   setManualApiKey,
-  summarizeSubtitles
+  summarizeSubtitles,
+  translateAndRefineBatch
 } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
@@ -80,9 +81,9 @@ export default function App() {
   const [showRangeModal, setShowRangeModal] = useState(false);
   const [rangeStart, setRangeStart] = useState<string>('');
   const [rangeEnd, setRangeEnd] = useState<string>('');
-  const [batchSize, setBatchSize] = useState<number>(100);
+  const [batchSize, setBatchSize] = useState<number>(80);
   const [concurrency, setConcurrency] = useState<number>(5);
-  const [delayMs, setDelayMs] = useState<number>(180);
+  const [delayMs, setDelayMs] = useState<number>(0);
 
   const handleOpenRangeModal = () => {
     if (subtitles.length > 0) {
@@ -242,9 +243,28 @@ export default function App() {
       return hasAlphaOriginal || hasAlphaTranslated;
     }).map((s, idx) => ({ ...s, index: idx + 1 }));
 
+    // Persist the selected index location so we don't reset to 0 or lose our tracking point
+    let newSelectedIndex: number | null = null;
+    if (final.length > 0) {
+      const formerlySelectedId = selectedIndex !== null && subtitles[selectedIndex] 
+        ? subtitles[selectedIndex].id 
+        : null;
+      if (formerlySelectedId) {
+        const foundIdx = final.findIndex(item => item.id === formerlySelectedId);
+        if (foundIdx !== -1) {
+          newSelectedIndex = foundIdx;
+        } else {
+          // Fall back to original active index or closest block
+          newSelectedIndex = Math.min(selectedIndex ?? 0, final.length - 1);
+        }
+      } else {
+        newSelectedIndex = 0;
+      }
+    }
+
     const removedCount = initialCount - final.length;
     setSubtitles(final);
-    setSelectedIndex(final.length > 0 ? 0 : null);
+    setSelectedIndex(newSelectedIndex);
     
     setStatus({ 
       type: 'success', 
@@ -573,12 +593,16 @@ export default function App() {
     const currentBatchSize = Math.max(1, batchSize);
     const currentConcurrency = Math.max(1, concurrency);
     const updatedSubtitles = [...subtitles];
-    const totalSteps = shouldRefine ? indices.length * 2 : indices.length;
+    const totalSteps = indices.length;
     let completedSteps = 0;
     
     try {
-      // Phase 1: Translation
-      setStatus({ type: 'info', message: 'Translating subtitles...' });
+      if (shouldRefine) {
+        setStatus({ type: 'info', message: 'Translating & refining subtitles (High-Speed 1-Pass Mode)...' });
+      } else {
+        setStatus({ type: 'info', message: 'Translating subtitles...' });
+      }
+
       for (let i = 0; i < indices.length; i += currentBatchSize * currentConcurrency) {
         const batchPromises = [];
         
@@ -592,15 +616,18 @@ export default function App() {
           
           batchPromises.push((async () => {
             try {
-              const translations = await translateBatch(textsToTranslate);
-              translations.forEach((translation, index) => {
+              const results = shouldRefine 
+                ? await translateAndRefineBatch(textsToTranslate)
+                : await translateBatch(textsToTranslate);
+
+              results.forEach((translatedText, index) => {
                 const originalIdx = currentBatchIndices[index];
                 if (updatedSubtitles[originalIdx]) {
-                  updatedSubtitles[originalIdx].translatedText = stripFormatting(translation);
+                  updatedSubtitles[originalIdx].translatedText = stripFormatting(translatedText);
                 }
               });
             } catch (err: any) {
-              console.error("Batch error:", err);
+              console.error("Batch processing error:", err);
               throw err;
             }
           })());
@@ -613,47 +640,6 @@ export default function App() {
         
         if (i + currentBatchSize * currentConcurrency < indices.length) {
           await new Promise(resolve => setTimeout(resolve, delayMs));
-        }
-      }
-
-      // Phase 2: Refinement
-      if (shouldRefine) {
-        setStatus({ type: 'info', message: 'Refining translations...' });
-        for (let i = 0; i < indices.length; i += currentBatchSize * currentConcurrency) {
-          const batchPromises = [];
-          
-          for (let c = 0; c < currentConcurrency; c++) {
-            const startIdx = i + (c * currentBatchSize);
-            if (startIdx >= indices.length) break;
-            
-            const endIdx = Math.min(startIdx + currentBatchSize, indices.length);
-            const currentBatchIndices = indices.slice(startIdx, endIdx);
-            const textsToRefine = currentBatchIndices.map(idx => updatedSubtitles[idx].translatedText!);
-            
-            batchPromises.push((async () => {
-              try {
-                const refinements = await refineBatch(textsToRefine);
-                refinements.forEach((refinement, index) => {
-                  const originalIdx = currentBatchIndices[index];
-                  if (updatedSubtitles[originalIdx]) {
-                    updatedSubtitles[originalIdx].translatedText = stripFormatting(refinement);
-                  }
-                });
-              } catch (err: any) {
-                console.error("Batch error:", err);
-                throw err;
-              }
-            })());
-          }
-          
-          await Promise.all(batchPromises);
-          setSubtitles([...updatedSubtitles]);
-          completedSteps += Math.min(currentBatchSize * currentConcurrency, indices.length - i);
-          setProgress(Math.round((completedSteps / totalSteps) * 100));
-          
-          if (i + currentBatchSize * currentConcurrency < indices.length) {
-            await new Promise(resolve => setTimeout(resolve, delayMs));
-          }
         }
       }
 
@@ -675,6 +661,12 @@ export default function App() {
   };
 
   const handleTranslateAll = () => {
+    if (subtitles.length === 0) return;
+    if (!hasApiKey) {
+      setShowKeyInput(true);
+      setStatus({ type: 'error', message: 'Please set an API key first.' });
+      return;
+    }
     const indices = Array.from({ length: subtitles.length }, (_, i) => i);
     handleProcessSubtitles(indices, true);
   };
