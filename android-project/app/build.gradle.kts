@@ -6,11 +6,14 @@ plugins {
 android {
     namespace = "com.subtitleeditor.ku"
     compileSdk = 34
+    compileSdkVersion = 34
 
     defaultConfig {
         applicationId = "com.subtitleeditor.ku"
         minSdk = 26
+        minSdkVersion = 26
         targetSdk = 34
+        targetSdkVersion = 34
         versionCode = 1
         versionName = "1.0.0"
 
@@ -51,7 +54,7 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime-ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -60,7 +63,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
-    implementation(libs.kotlinx.coroutines-android)
+    implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
@@ -68,5 +71,5 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
-    debugImplementation(libs.androidx.compose.ui.test-manifest)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
