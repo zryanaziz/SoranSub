@@ -212,7 +212,6 @@ export default function App() {
 
   const handleGo = () => {
     switch (selectedAction) {
-      case 'paraphraseAll': handleParaphraseAll(); break;
       case 'sync': setShowSyncModal(true); break;
       case 'selectVideo': videoFileInputRef.current?.click(); break;
       case 'cleanUp': handleCleanUpSubtitles(); break;
@@ -599,76 +598,6 @@ export default function App() {
     handleProcessSubtitles(indices, true);
   };
   
-  const handleParaphraseAll = async () => {
-    if (subtitles.length === 0) return;
-    if (!hasApiKey) {
-      setShowKeyInput(true);
-      setStatus({ type: 'error', message: 'Please set an API key first.' });
-      return;
-    }
-
-    setIsTranslating(true);
-    setProgress(5);
-    const updatedSubtitles = [...subtitles];
-    const indices = subtitles.map((_, idx) => idx).filter(idx => subtitles[idx].translatedText);
-    const totalSteps = indices.length;
-    let completedSteps = 0;
-    const batchSize = 50;
-    const concurrency = 5;
-
-    try {
-      setStatus({ type: 'info', message: 'Paraphrasing all subtitles...' });
-      for (let i = 0; i < indices.length; i += batchSize * concurrency) {
-        const batchPromises = [];
-        
-        for (let c = 0; c < concurrency; c++) {
-          const startIdx = i + (c * batchSize);
-          if (startIdx >= indices.length) break;
-          
-          const endIdx = Math.min(startIdx + batchSize, indices.length);
-          const currentBatchIndices = indices.slice(startIdx, endIdx);
-          const textsToParaphrase = currentBatchIndices.map(idx => updatedSubtitles[idx].translatedText!);
-          
-          batchPromises.push((async () => {
-            try {
-              const paraphrased = await paraphraseBatch(textsToParaphrase);
-              paraphrased.forEach((text, index) => {
-                const originalIdx = currentBatchIndices[index];
-                if (updatedSubtitles[originalIdx]) {
-                  updatedSubtitles[originalIdx].translatedText = stripFormatting(text);
-                }
-              });
-            } catch (err: any) {
-              console.error("Batch error:", err);
-              throw err;
-            }
-          })());
-        }
-        
-        await Promise.all(batchPromises);
-        setSubtitles([...updatedSubtitles]);
-        completedSteps += Math.min(batchSize * concurrency, indices.length - i);
-        setProgress(Math.round((completedSteps / totalSteps) * 100));
-        
-        if (i + batchSize * concurrency < indices.length) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-      }
-      setProgress(100);
-      setStatus({ type: 'success', message: 'Paraphrasing complete!' });
-      playDing();
-      setTimeout(() => {
-        setIsTranslating(false);
-        setProgress(0);
-      }, 500);
-    } catch (err: any) {
-      console.error("Paraphrasing failed:", err);
-      setStatus({ type: 'error', message: `Paraphrasing failed: ${err.message || 'Unknown error'}. Please try again.` });
-      setIsTranslating(false);
-      setProgress(0);
-    }
-  };
-  
   const handleReTranslateBlock = async () => {
     if (selectedIndex === null) return;
     const item = subtitles[selectedIndex];
@@ -1006,17 +935,7 @@ export default function App() {
               <Languages size={14} />
             )}
           </button>
-
-          <button 
-            onClick={handleParaphraseAll}
-            disabled={isTranslating || subtitles.length === 0}
-            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-colors"
-            title="Paraphrase All"
-          >
-            <Sparkles size={14} />
-          </button>
-
-          <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
+<div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
           <button 
             onClick={() => setShowSyncModal(true)}
