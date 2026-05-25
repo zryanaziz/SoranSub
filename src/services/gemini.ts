@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
-const MODEL = "gemini-flash-latest";
+const MODEL = "gemini-3-flash-preview";
 
 // Helper to extract JSON from potentially messy model output
 function extractJson(text: string): any {
@@ -138,40 +138,6 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
   });
 }
 
-export async function translateAndRefineBatch(texts: string[]): Promise<string[]> {
-  return withRetry(async () => {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: `You are provided with a JSON array of ${texts.length} English subtitle lines.
-      Your task is to translate each line into Kurdish Sorani, and apply immediate linguistic refinement to ensure natural phrasing, correct grammar/spelling, and professional styling.
-      
-      RULES:
-      1. Return a JSON array of strings.
-      2. The output array MUST have exactly ${texts.length} elements.
-      3. Maintain the exact order of the input.
-      4. If a line is empty or just punctuation, keep it as is.
-      5. PRESERVE NEWLINES: If an input string has a line break, the translation MUST also have a line break at a natural point. Do not remove line breaks.
-      6. NO LITERAL ESCAPES: Do not return literal '\\n' characters in the text. Use actual newlines in your response strings.
-      
-      INPUT: ${JSON.stringify(texts)}`,
-      config: {
-        systemInstruction: "You are a professional subtitle translator and editor specializing in Kurdish Sorani. Translate and refine text simultaneously, resolving any translation errors, spelling, formatting and unnatural phrasing to provide highly polished final subtitle lines.",
-        responseMimeType: "application/json",
-        responseSchema: BATCH_SCHEMA,
-      }
-    });
-
-    const result = extractJson(response.text || "[]");
-    if (Array.isArray(result) && result.length === texts.length) {
-      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
-    }
-    
-    console.warn(`Batch mismatch for translateAndRefineBatch: expected ${texts.length}, got ${result?.length}`);
-    return texts;
-  });
-}
-
 export async function refineBatch(texts: string[]): Promise<string[]> {
   return withRetry(async () => {
     const ai = getAI();
@@ -266,6 +232,44 @@ export async function refineSourceBatch(texts: string[]): Promise<string[]> {
     }
     
     console.warn(`Batch mismatch for refineSourceBatch: expected ${texts.length}, got ${result?.length}`);
+    return texts;
+  });
+}
+
+/**
+ * Joint Translation & Refinement (Joint 1-Pass)
+ * Consolidates translation and refinement into a single API call per batch.
+ */
+export async function jointTranslateRefineBatch(texts: string[]): Promise<string[]> {
+  return withRetry(async () => {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: `You are a professional subtitle translator and editor specializing in Kurdish Sorani.
+      Your task is to translate and simultaneously refine the following ${texts.length} English subtitle lines.
+      
+      JOINT 1-PASS RULES:
+      1. TRANSLATE accurately into natural Kurdish Sorani.
+      2. REFINE immediately to ensure grammar, spelling, and phrasing are perfect and natural.
+      3. Return a JSON array of strings.
+      4. The output array MUST have exactly ${texts.length} elements.
+      5. Maintain the exact order of the input.
+      6. PRESERVE NEWLINES: If an input string has a line break, the translated/refined version MUST also have a line break.
+      
+      INPUT: ${JSON.stringify(texts)}`,
+      config: {
+        systemInstruction: "You are a professional Kurdish Sorani translator and editor. Translate and refine subtitles in a single pass.",
+        responseMimeType: "application/json",
+        responseSchema: BATCH_SCHEMA,
+      }
+    });
+
+    const result = extractJson(response.text || "[]");
+    if (Array.isArray(result) && result.length === texts.length) {
+      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
+    }
+    
+    console.warn(`Batch mismatch for jointTranslateRefineBatch: expected ${texts.length}, got ${result?.length}`);
     return texts;
   });
 }
