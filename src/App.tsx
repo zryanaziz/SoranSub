@@ -531,7 +531,7 @@ export default function App() {
     setProgress(5);
     setShowFinishedMessage(false);
     
-    const batchSize = 70;
+    const batchSize = 100;
     const concurrency = 5;
     const updatedSubtitles = [...subtitles];
     const totalSteps = indices.length;
@@ -554,12 +554,40 @@ export default function App() {
           batchPromises.push((async () => {
             try {
               const results = await jointTranslateRefineBatch(textsToTranslate);
+              
+              const failedIndices: number[] = [];
               results.forEach((translated, index) => {
                 const originalIdx = currentBatchIndices[index];
-                if (updatedSubtitles[originalIdx]) {
-                  updatedSubtitles[originalIdx].translatedText = stripFormatting(translated);
+                const originalText = updatedSubtitles[originalIdx].text.trim();
+                const translatedText = translated.trim();
+
+                // Validation: If AI just echoed the English (and it's not a short numeric/symbolic string)
+                // we mark it as failed and retry.
+                const isEcho = originalText.length > 2 && originalText.toLowerCase() === translatedText.toLowerCase();
+
+                if (isEcho) {
+                  failedIndices.push(originalIdx);
+                } else {
+                  if (updatedSubtitles[originalIdx]) {
+                    updatedSubtitles[originalIdx].translatedText = stripFormatting(translated);
+                  }
                 }
               });
+
+              // Double-Check: High-priority retry for any echoed blocks
+              if (failedIndices.length > 0) {
+                const failedTexts = failedIndices.map(idx => updatedSubtitles[idx].text);
+                // Attempt one more time for these specific failures with a retry-specific handler if needed
+                // but jointTranslateRefineBatch with smaller batch usually fixes it
+                const recovered = await jointTranslateRefineBatch(failedTexts);
+                recovered.forEach((text, index) => {
+                  const originalIdx = failedIndices[index];
+                  if (updatedSubtitles[originalIdx]) {
+                    updatedSubtitles[originalIdx].translatedText = stripFormatting(text);
+                  }
+                });
+              }
+
             } catch (err: any) {
               console.error("Batch error:", err);
               throw err;
