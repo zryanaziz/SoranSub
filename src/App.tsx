@@ -531,7 +531,7 @@ export default function App() {
     setProgress(5);
     setShowFinishedMessage(false);
     
-    const batchSize = 100;
+    const batchSize = 70;
     const concurrency = 5;
     const updatedSubtitles = [...subtitles];
     const totalSteps = indices.length;

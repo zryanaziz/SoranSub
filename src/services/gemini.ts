@@ -245,20 +245,22 @@ export async function jointTranslateRefineBatch(texts: string[]): Promise<string
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL,
-      contents: `You are a professional subtitle translator and editor specializing in Kurdish Sorani.
-      Your task is to translate and simultaneously refine the following ${texts.length} English subtitle lines.
+      contents: `You are a professional subtitle translator and editor specializing in Kurdish (Sorani).
+      Your task is to TRANSLATE and REFINE the following ${texts.length} English subtitle lines.
       
-      JOINT 1-PASS RULES:
-      1. TRANSLATE accurately into natural Kurdish Sorani.
-      2. REFINE immediately to ensure grammar, spelling, and phrasing are perfect and natural.
-      3. Return a JSON array of strings.
-      4. The output array MUST have exactly ${texts.length} elements.
-      5. Maintain the exact order of the input.
-      6. PRESERVE NEWLINES: If an input string has a line break, the translated/refined version MUST also have a line break.
+      CRITICAL RULES:
+      1. TRANSLATE: Convert the English text into high-quality, natural Kurdish Sorani.
+      2. REFINE: Ensure the Kurdish text uses perfect grammar, spelling, and idiomatic phrasing for subtitles.
+      3. OUTPUT: Return a JSON array of strings ONLY.
+      4. ORDER: Maintain the exact order of the provided English lines.
+      5. COUNT: You MUST return exactly ${texts.length} strings in the array.
+      6. NEWLINES: If an input string has a line break, the translation MUST also have a line break.
+      7. DO NOT ECHO: Do not return the English text. If a line cannot be translated, provide the best possible transliteration or professional adaptation in Sorani Kurdish.
       
-      INPUT: ${JSON.stringify(texts)}`,
+      INPUT ENGLISH LINES:
+      ${JSON.stringify(texts)}`,
       config: {
-        systemInstruction: "You are a professional Kurdish Sorani translator and editor. Translate and refine subtitles in a single pass.",
+        systemInstruction: "You are a professional Kurdish Sorani translator and editor. You translate English subtitles into natural, refined Kurdish Sorani. You always return the exact same number of lines as provided.",
         responseMimeType: "application/json",
         responseSchema: BATCH_SCHEMA,
       }
@@ -269,8 +271,17 @@ export async function jointTranslateRefineBatch(texts: string[]): Promise<string
       return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
     }
     
-    console.warn(`Batch mismatch for jointTranslateRefineBatch: expected ${texts.length}, got ${result?.length}`);
-    return texts;
+    // If length mismatch, try to fix or throw so withRetry can catch it
+    if (Array.isArray(result) && result.length > 0) {
+       console.warn(`Batch length mismatch: expected ${texts.length}, got ${result.length}. Returning available results and padding with remaining.`);
+       const padded = [...result.slice(0, texts.length)];
+       while (padded.length < texts.length) {
+         padded.push(texts[padded.length]);
+       }
+       return padded.map(s => String(s));
+    }
+
+    throw new Error(`AI failed to return valid translation batch. (Expected ${texts.length}, got ${result?.length ?? 'invalid'}). Falling back to retry.`);
   });
 }
 
