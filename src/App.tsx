@@ -57,7 +57,7 @@ export default function App() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info', message: string } | null>(null);
-  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [showFinishedMessage, setShowFinishedMessage] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'video'>('list');
@@ -529,6 +529,7 @@ export default function App() {
 
     setIsTranslating(true);
     setProgress(5);
+    setShowFinishedMessage(false);
     
     const batchSize = 100;
     const concurrency = 5;
@@ -580,8 +581,8 @@ export default function App() {
       setStatus({ type: 'success', message: 'Process complete!' });
       playDing();
       
+      setShowFinishedMessage(true);
       setTimeout(() => {
-        setShowCompletionModal(true);
         setIsTranslating(false);
         setProgress(0);
       }, 500);
@@ -1264,6 +1265,14 @@ export default function App() {
               </div>
             )}
           </div>
+
+          {showFinishedMessage && (
+            <div className="p-4 bg-green-500/10 border-b border-[#141414] animate-in fade-in slide-in-from-top-1 duration-500">
+              <p className="text-center text-green-700 font-mono text-[10px] md:text-xs uppercase tracking-[0.2em] font-black">
+                Translate and Refinement is Finished
+              </p>
+            </div>
+          )}
         </div>
       </main>
 
@@ -1335,32 +1344,6 @@ export default function App() {
                   Save Key
                 </button>
               </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Completion Modal */}
-      <AnimatePresence>
-        {showCompletionModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#141414] bg-opacity-80 backdrop-blur-sm">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-[#E4E3E0] border border-[#141414] p-8 max-w-md w-full shadow-2xl text-center"
-            >
-              <div className="w-16 h-16 bg-[#141414] text-[#E4E3E0] rounded-full flex items-center justify-center mx-auto mb-6">
-                <CheckCircle2 size={32} />
-              </div>
-              <h2 className="font-serif italic text-3xl mb-2">Translation Complete!</h2>
-              <p className="text-sm font-mono opacity-50 uppercase tracking-widest mb-8">All blocks have been translated to Kurdish Sorani.</p>
-              <button 
-                onClick={() => setShowCompletionModal(false)}
-                className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all"
-              >
-                Continue Editing
-              </button>
             </motion.div>
           </div>
         )}
