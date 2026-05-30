@@ -656,24 +656,26 @@ export default function App() {
     
     let downloadName = fileName || (useTranslation ? 'translated_subtitles.srt' : 'original_subtitles.srt');
     
-    // Inject .ku before extension for better player recognition
+    // Always ensure the extension is .srt
     if (downloadName.includes('.')) {
       const parts = downloadName.split('.');
-      const ext = parts.pop();
+      parts.pop(); // Remove original extension
       
       // Remove existing language tags if present (e.g., .en, .EN, .fr)
       if (parts.length > 0) {
         const lastBasePart = parts[parts.length - 1];
-        // Regex matches common 2-3 letter language codes
         if (/^[a-z]{2,3}(-[a-z]{2,4})?$/i.test(lastBasePart)) {
           parts.pop();
         }
       }
       
-      downloadName = parts.join('.') + '.ku.' + ext;
+      downloadName = parts.join('.') + '.srt';
     } else {
-      downloadName += '.ku.srt';
+      downloadName += '.srt';
     }
+    
+    // Add .ku before the finally fixed .srt extension
+    downloadName = downloadName.replace(/\.srt$/, '.ku.srt');
     
     a.download = downloadName;
     document.body.appendChild(a);
