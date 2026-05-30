@@ -214,50 +214,37 @@ export default function App() {
       }
       
       // 3. Bidirectional Punctuation Swap (The robust toggle logic)
-      // Symbols we want to swap from side to side
-      const symbolsToSwap = ['!', '؟', '،', '؛', ':', ';', ',', '?', '.', '!!', '؟!', '!؟', '...', '..'];
+      // Symbols we want to swap from side to side - EXCLUDING question marks as requested
+      const symbolsToSwap = ['...', '..', '!!!', '!!', '!', '،', '؛', ':', ';', ',', '.', '¿', '¡'];
       
-      // Determine if there is leading punctuation (excluding dialogue dashes)
-      const hasLeading = symbolsToSwap.some(sym => s.startsWith(sym));
-      
-      if (hasLeading) {
-        // Move leading symbols to the end
-        let leadingChunk = "";
-        let found = true;
-        while (found) {
-          found = false;
-          // Sort symbols by length to catch longest matches first (e.g., ... before .)
-          const sortedSymbols = [...symbolsToSwap].sort((a, b) => b.length - a.length);
-          for (const sym of sortedSymbols) {
-            if (s.startsWith(sym)) {
-              leadingChunk += sym;
-              s = s.substring(sym.length).trim();
-              found = true;
-              break;
-            }
+      const escapedSymbols = symbolsToSwap.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+      const leadingRegex = new RegExp(`^(${escapedSymbols}|\\s)+`);
+      const trailingRegex = new RegExp(`(${escapedSymbols}|\\s)+$`);
+
+      const leadingMatch = s.match(leadingRegex);
+      const trailingMatch = s.match(trailingRegex);
+
+      if (leadingMatch || trailingMatch) {
+        let leadingPunc = "";
+        let trailingPunc = "";
+        let coreText = s;
+
+        if (leadingMatch) {
+          leadingPunc = leadingMatch[0];
+          coreText = coreText.substring(leadingPunc.length);
+        }
+        if (trailingMatch) {
+          // Re-calculate trailing match after stripping leading match to avoid double-dipping in tiny strings
+          const remainingTrailingMatch = coreText.match(trailingRegex);
+          if (remainingTrailingMatch) {
+            trailingPunc = remainingTrailingMatch[0];
+            coreText = coreText.substring(0, coreText.length - trailingPunc.length);
           }
         }
-        s = s + leadingChunk;
-      } else {
-        // If no leading punctuation, check for trailing punctuation to move to the front
-        const hasTrailing = symbolsToSwap.some(sym => s.endsWith(sym));
-        if (hasTrailing) {
-          let trailingChunk = "";
-          let found = true;
-          while (found) {
-            found = false;
-            const sortedSymbols = [...symbolsToSwap].sort((a, b) => b.length - a.length);
-            for (const sym of sortedSymbols) {
-              if (s.endsWith(sym)) {
-                trailingChunk = sym + trailingChunk;
-                s = s.substring(0, s.length - sym.length).trim();
-                found = true;
-                break;
-              }
-            }
-          }
-          s = trailingChunk + s;
-        }
+
+        // The "Symbol Swap": move leading to back, trailing to front
+        // We trim intermediate spaces but preserve punctuation clusters
+        s = (trailingPunc.trim() + " " + coreText.trim() + " " + leadingPunc.trim()).trim();
       }
       
       return s;
