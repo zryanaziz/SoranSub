@@ -213,17 +213,21 @@ export default function App() {
         s = mirrored;
       }
       
-      // 3. Move leading punctuation to the end
+      // 3. Move leading punctuation to the end (The ". ! ," go to other side logic)
       // Symbols that should NOT be at the start of a Kurdish Sorani subtitle
-      const leadingSymbols = ['...', '..', '.', '!', '؟', '،', '؛', '-', ':', '؟!', '!؟'];
+      // We exclude '...' and '-' from this list because they are valid prefix markers
+      const leadingToMove = ['.', '!', '؟', '،', '؛', ':', ';', ',', '?', '!', '!!'];
       
       let found = true;
       let iterations = 0;
-      while (found && iterations < 10) { // Safety limit
+      while (found && iterations < 10) { 
         found = false;
         iterations++;
-        for (const symbol of leadingSymbols) {
+        for (const symbol of leadingToMove) {
           if (s.startsWith(symbol)) {
+            // Only move if it's not part of an ellipsis
+            if (symbol === '.' && s.startsWith('..')) continue;
+            
             s = s.substring(symbol.length).trim() + symbol;
             found = true;
             break;
