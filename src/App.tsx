@@ -33,7 +33,7 @@ import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stri
 import { 
   translateToKurdishSorani, 
   jointTranslateRefineBatch,
-  setManualApiKey
+  setManualApiKey,
 } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
@@ -49,13 +49,9 @@ export default function App() {
   const [showFinishedMessage, setShowFinishedMessage] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
-  const [manualKey, setManualKey] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('gemini_api_key') || '';
-    }
-    return '';
-  });
+  const [manualKey, setManualKey] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -144,22 +140,34 @@ export default function App() {
     let tagCount = 0;
     const initialCount = subtitles.length;
 
-    // Helper for character swapping
+    // Helper for character swapping - specifically for Kurdish Sorani requirements
     const swapSymbols = (str: string) => {
       if (!str) return str;
       let s = str.trim();
-      const chars = ['!', '?', '-', '،', '...'];
       
-      for (const char of chars) {
-        // If it's at the start, move to end
-        if (s.startsWith(char)) {
-          s = s.substring(char.length).trim() + char;
-        } 
-        // If it's at the end, move to start
-        else if (s.endsWith(char)) {
-          s = char + s.substring(0, s.length - char.length).trim();
+      // Symbols that should NOT be at the start of a Kurdish Sorani subtitle
+      // We move them to the end because in Sorani Kurdish punctuation follows the sentence
+      const leadingSymbols = [',', '...', '.', '!', '?', '-', '،', '؛', '؟'];
+      
+      let found = true;
+      while (found) {
+        found = false;
+        for (const symbol of leadingSymbols) {
+          if (s.startsWith(symbol)) {
+            // Special case for ellipses ... to ensure we catch it all
+            if (symbol === '...' && s.startsWith('...')) {
+              s = s.substring(3).trim() + '...';
+              found = true;
+              break;
+            } else if (s.startsWith(symbol)) {
+              s = s.substring(symbol.length).trim() + symbol;
+              found = true;
+              break;
+            }
+          }
         }
       }
+      
       return s;
     };
 
@@ -256,6 +264,64 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const checkApiKey = async () => {
+      // 1. Check for manual key in localStorage
+      const storedKey = localStorage.getItem('gemini_api_key');
+      if (storedKey) {
+        setHasApiKey(true);
+        return;
+      }
+
+      // 2. Check for environment variables
+      const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && process.env?.API_KEY);
+      if (envKey) {
+        setHasApiKey(true);
+        return;
+      }
+
+      // 3. Check AI Studio platform key
+      if (window.aistudio?.hasSelectedApiKey) {
+        try {
+          const hasKey = await window.aistudio.hasSelectedApiKey();
+          setHasApiKey(hasKey);
+        } catch (e) {
+          console.error("Error checking platform API key:", e);
+          setHasApiKey(false);
+        }
+      } else {
+        setHasApiKey(false);
+      }
+    };
+    checkApiKey();
+    
+    // Periodically check if key was selected via platform
+    const interval = setInterval(checkApiKey, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleClearKey = () => {
+    setManualApiKey('');
+    setHasApiKey(false);
+    setStatus({ type: 'info', message: 'API Key cleared.' });
+  };
+
+  const handleSaveManualKey = () => {
+    if (manualKey.trim()) {
+      setManualApiKey(manualKey.trim());
+      setHasApiKey(true);
+      setShowKeyInput(false);
+      setStatus({ type: 'success', message: 'API Key saved successfully!' });
+    }
+  };
+
+  const handleOpenKeySelector = async () => {
+    if (window.aistudio?.openSelectKey) {
+      await window.aistudio.openSelectKey();
+      setHasApiKey(true);
+    }
+  };
+
+  useEffect(() => {
     const checkMobile = () => {
       setIsMobileView(window.innerWidth < 768);
     };
@@ -300,7 +366,7 @@ export default function App() {
         return;
       }
 
-      if (ext === 'srt' || ext === 'vtt' || ext === 'sub' || ext === 'ass') {
+      if (['srt', 'vtt', 'sub', 'ass'].includes(ext || '')) {
         setFileName(file.name);
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -344,6 +410,12 @@ export default function App() {
   const handleProcessSubtitles = async (indices: number[], shouldRefine: boolean = true) => {
     if (subtitles.length === 0 || indices.length === 0) return;
     
+    if (!hasApiKey) {
+      setShowKeyInput(true);
+      setStatus({ type: 'error', message: 'Please set an API key first.' });
+      return;
+    }
+
     setIsTranslating(true);
     setProgress(5);
     setShowFinishedMessage(false);
@@ -433,25 +505,7 @@ export default function App() {
       }, 500);
     } catch (err: any) {
       console.error("Process failed:", err);
-      const isAuthError = err.message?.includes('API key expired') || err.message?.includes('API_KEY_INVALID');
-      
-      if (isAuthError) {
-        if (manualKey) {
-          setStatus({ 
-            type: 'error', 
-            message: 'Your custom API key has expired or is invalid. Please update or clear it in settings.' 
-          });
-        } else {
-          setStatus({ 
-            type: 'error', 
-            message: 'The system API key has expired. Please provide your own Gemini API key in settings to continue.' 
-          });
-        }
-        setShowKeyInput(true);
-      } else {
-        setStatus({ type: 'error', message: `Process failed: ${err.message || 'Unknown error'}. Please try again.` });
-      }
-      
+      setStatus({ type: 'error', message: `Process failed: ${err.message || 'Unknown error'}. Please try again.` });
       setIsTranslating(false);
       setProgress(0);
     }
@@ -484,13 +538,23 @@ export default function App() {
     
     let downloadName = fileName || (useTranslation ? 'translated_subtitles.srt' : 'original_subtitles.srt');
     
-    // Always ensure .srt extension
+    // Inject .ku before extension for better player recognition
     if (downloadName.includes('.')) {
       const parts = downloadName.split('.');
-      parts.pop();
-      downloadName = parts.join('.') + '.srt';
+      const ext = parts.pop();
+      
+      // Remove existing language tags if present (e.g., .en, .EN, .fr)
+      if (parts.length > 0) {
+        const lastBasePart = parts[parts.length - 1];
+        // Regex matches common 2-3 letter language codes
+        if (/^[a-z]{2,3}(-[a-z]{2,4})?$/i.test(lastBasePart)) {
+          parts.pop();
+        }
+      }
+      
+      downloadName = parts.join('.') + '.ku.' + ext;
     } else {
-      downloadName += '.srt';
+      downloadName += '.ku.srt';
     }
     
     a.download = downloadName;
@@ -501,11 +565,13 @@ export default function App() {
   };
 
   const handleCloseSubtitle = () => {
-    setSubtitles([]);
-    setFileName('');
-    setSelectedIndex(null);
-    localStorage.removeItem('soransub_current_session');
-    setStatus({ type: 'info', message: 'Subtitle file closed.' });
+    if (window.confirm('Are you sure you want to close the current subtitle file? Any unsaved changes will be lost.')) {
+      setSubtitles([]);
+      setFileName('');
+      setSelectedIndex(null);
+      localStorage.removeItem('soransub_current_session');
+      setStatus({ type: 'info', message: 'Subtitle file closed.' });
+    }
   };
 
   const handleSyncSubtitles = () => {
@@ -569,18 +635,6 @@ export default function App() {
     setSelectedIndex(idx);
   };
 
-  const handleSaveManualKey = () => {
-    if (manualKey.trim()) {
-      setManualApiKey(manualKey.trim());
-      setShowKeyInput(false);
-      setStatus({ type: 'success', message: 'API Key saved successfully!' });
-    } else {
-      setManualApiKey('');
-      setShowKeyInput(false);
-      setStatus({ type: 'info', message: 'Manual API Key cleared. Using default.' });
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] flex flex-col relative">
       {/* Global Progress Bar */}
@@ -629,31 +683,38 @@ export default function App() {
 
           <div className="flex flex-col items-end md:hidden">
             <div className="flex flex-col items-end gap-1 mb-2">
-              <span className={cn(
-                "text-[10px] font-mono flex items-center gap-1",
-                manualKey ? "text-blue-600" : "text-green-600"
-              )}>
-                <Sparkles size={10} /> {manualKey ? "Custom AI active" : "AI Connected"}
-              </span>
+              {!hasApiKey ? (
+                <>
+                  <button 
+                    onClick={handleOpenKeySelector}
+                    className="px-2 py-1 bg-red-500 text-white text-[8px] uppercase font-mono rounded-sm animate-pulse"
+                  >
+                    Select Key
+                  </button>
+                  <button 
+                    onClick={() => setShowKeyInput(true)}
+                    className="px-2 py-1 border border-red-500 text-red-500 text-[8px] uppercase font-mono rounded-sm"
+                  >
+                    Enter Key
+                  </button>
+                </>
+              ) : (
+                <button 
+                  onClick={() => setShowKeyInput(true)}
+                  className="px-2 py-1 border border-[#141414] text-[#141414] text-[8px] uppercase font-mono rounded-sm opacity-50 hover:opacity-100"
+                >
+                  Change Key
+                </button>
+              )}
             </div>
-            <div className="text-[10px] font-mono uppercase opacity-70 flex items-center gap-2">
-              {translatedCount}/{subtitles.length} Blocks
-              {subtitles.length > 0 && (
+            {subtitles.length > 0 && (
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-[10px] font-mono uppercase opacity-50">{subtitles.length} Blocks</span>
                 <button 
                   onClick={handleCloseSubtitle}
                   className="text-red-500 p-1 hover:bg-red-50 rounded-sm"
                 >
                   <X size={12} />
-                </button>
-              )}
-            </div>
-            {(subtitles.length > 0) && (
-              <div className="flex border border-[#141414] rounded-sm overflow-hidden mt-1">
-                <button 
-                  onClick={() => {}}
-                  className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors bg-[#141414] text-[#E4E3E0]")}
-                >
-                  List
                 </button>
               </div>
             )}
@@ -663,14 +724,33 @@ export default function App() {
 
 
         <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
-          <button 
-            onClick={() => setShowKeyInput(true)}
-            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] text-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
-            title="API Key Settings"
-          >
-            <Sparkles size={14} />
-          </button>
-          
+          <div className="flex gap-2">
+            {!hasApiKey ? (
+              <>
+                <button 
+                  onClick={handleOpenKeySelector}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-red-500 text-white text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-600 transition-colors animate-pulse"
+                >
+                  <AlertCircle size={12} />
+                  Select Key
+                </button>
+                <button 
+                  onClick={() => setShowKeyInput(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 border border-red-500 text-red-500 text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-50 transition-colors"
+                >
+                  Enter Key
+                </button>
+              </>
+            ) : (
+              <button 
+                onClick={() => setShowKeyInput(true)}
+                className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] text-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-50 hover:opacity-100"
+                title="API Key Settings"
+              >
+                <Sparkles size={14} />
+              </button>
+            )}
+          </div>
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -771,8 +851,8 @@ export default function App() {
 
       {/* Main Layout */}
       <main className="flex flex-1 overflow-hidden relative">
-        {/* Subtitle List */}
-        <div className="flex-1 flex flex-col transition-all duration-300">
+        {/* Left Pane: Subtitle List */}
+        <div className="w-full border-r border-[#141414] flex flex-col transition-all duration-300">
           {subtitles.length === 0 ? (
             <div 
               {...getRootProps()} 
@@ -882,20 +962,16 @@ export default function App() {
                           rows={2}
                         />
                       </div>
-                      <div 
-                        className="p-1 italic font-serif" 
-                        dir="rtl"
-                      >
+                      <div className="p-1 italic font-serif" dir="auto">
                         <textarea 
                           value={item.translatedText || ''}
                           onChange={(e) => handleUpdateText(item.id, e.target.value, true)}
                           onFocus={() => handleSelectItem(idx)}
                           placeholder="Type translation..."
                           className={cn(
-                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed text-right font-medium",
+                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed",
                             isActive ? "text-white placeholder:text-white/30" : "text-[#141414] placeholder:text-black/30"
                           )}
-                          dir="rtl"
                           rows={2}
                         />
                       </div>
@@ -936,11 +1012,8 @@ export default function App() {
         </AnimatePresence>
 
         <div className="flex items-center gap-2 md:gap-4">
-          <span className="hidden xs:inline">Gemini 1.5 Flash {manualKey && "(Custom Key)"}</span>
-          <div className={cn(
-            "w-1.5 h-1.5 md:w-2 md:h-2 rounded-full animate-pulse",
-            manualKey ? "bg-blue-500" : "bg-green-500"
-          )} />
+          <span className="hidden xs:inline">Gemini 3 Flash</span>
+          <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-green-500 animate-pulse" />
         </div>
       </footer>
 
@@ -956,7 +1029,7 @@ export default function App() {
             >
               <h3 className="text-lg font-serif italic mb-4">Enter Gemini API Key</h3>
               <p className="text-xs opacity-70 mb-4 font-mono leading-relaxed">
-                Enter your Gemini API key manually if you want to use your own quota. If left empty, the server-side key will be used.
+                Enter your Gemini API key manually. It will be stored locally in your browser.
               </p>
               <input 
                 type="password"
@@ -965,30 +1038,20 @@ export default function App() {
                 placeholder="AIzaSy..."
                 className="w-full bg-transparent border border-[#141414] p-2 text-xs font-mono mb-6 focus:outline-none focus:ring-1 focus:ring-[#141414]"
               />
-          <button 
-            onClick={() => {
-              setManualKey('');
-              setManualApiKey('');
-              setStatus({ type: 'info', message: 'Manual API Key cleared. Using default.' });
-            }}
-            className="px-4 py-2 border border-red-500 text-red-500 text-[10px] uppercase tracking-widest font-mono hover:bg-red-50"
-          >
-            Clear Key
-          </button>
-          <div className="flex justify-end gap-3">
-            <button 
-              onClick={() => setShowKeyInput(false)}
-              className="px-4 py-2 text-[10px] uppercase tracking-widest font-mono opacity-50 hover:opacity-100"
-            >
-              Cancel
-            </button>
-            <button 
-              onClick={handleSaveManualKey}
-              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest font-mono hover:bg-opacity-90"
-            >
-              Save Key
-            </button>
-          </div>
+              <div className="flex justify-end gap-3">
+                <button 
+                  onClick={() => setShowKeyInput(false)}
+                  className="px-4 py-2 text-[10px] uppercase tracking-widest font-mono opacity-50 hover:opacity-100"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSaveManualKey}
+                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest font-mono hover:bg-opacity-90"
+                >
+                  Save Key
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
