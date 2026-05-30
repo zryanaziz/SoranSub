@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
-const MODEL = "gemini-1.5-flash-latest";
+const MODEL = "gemini-1.5-pro-latest";
 
 const BATCH_SCHEMA = {
   type: Type.STRING,
@@ -16,36 +16,39 @@ const BATCH_SCHEMA = {
 const app = express();
 app.use(express.json());
 
+// Safer env check for Vercel
+const getApiKey = (req: express.Request) => {
+  const customKeyFromHeader = req.headers['x-api-key'] as string;
+  const customKey = (customKeyFromHeader && customKeyFromHeader !== "null" && customKeyFromHeader !== "undefined" && customKeyFromHeader.trim().length > 10) ? customKeyFromHeader.trim() : null;
+  return customKey || process.env.GEMINI_API_KEY;
+};
+
 // Load AI client
-const getAiClient = (apiKey?: string) => {
+const getAiClient = (apiKey: string) => {
   return new GoogleGenAI({
-    apiKey: apiKey || process.env.GEMINI_API_KEY || "",
+    apiKey: apiKey,
     httpOptions: {
       headers: {
-        'User-Agent': 'aistudio-build',
+        'User-Agent': 'aistudio-build subtitle-tool',
       }
     }
   });
 };
-
-const ai = getAiClient();
 
 // Health check
 app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 
     model: MODEL,
-    hasKey: !!process.env.GEMINI_API_KEY
+    hasKey: !!process.env.GEMINI_API_KEY,
+    env: process.env.NODE_ENV
   });
 });
 
 // API Routes
 app.post("/api/translate", async (req, res) => {
   try {
-    const customKeyFromHeader = req.headers['x-api-key'] as string;
-    const customKey = (customKeyFromHeader && customKeyFromHeader !== "null" && customKeyFromHeader !== "undefined" && customKeyFromHeader.trim().length > 10) ? customKeyFromHeader.trim() : null;
-    
-    const apiKey = customKey || process.env.GEMINI_API_KEY;
+    const apiKey = getApiKey(req);
 
     if (!apiKey) {
       return res.status(401).json({ error: "Gemini API Key is missing. Please set it in environment variables or settings." });
@@ -56,10 +59,7 @@ app.post("/api/translate", async (req, res) => {
       return res.status(400).json({ error: "Text is required" });
     }
 
-    console.log(`Translation request using ${customKey ? 'custom' : 'system'} key`);
-
-    const client = customKey ? getAiClient(customKey) : ai;
-
+    const client = getAiClient(apiKey);
     const response = await client.models.generateContent({
       model: MODEL,
       contents: text,
@@ -68,19 +68,20 @@ app.post("/api/translate", async (req, res) => {
       }
     });
 
-    res.json({ translation: (response.text || text).replace(/\\n/g, '\n') });
+    const resultText = response.text || text;
+    res.json({ translation: resultText.replace(/\\n/g, '\n') });
   } catch (error: any) {
     console.error("Translation error:", error);
-    res.status(400).json({ error: error.message });
+    res.status(error.status || 500).json({ 
+      error: error.message || "Internal Server Error",
+      details: error.details || []
+    });
   }
 });
 
 app.post("/api/translate-batch", async (req, res) => {
   try {
-    const customKeyFromHeader = req.headers['x-api-key'] as string;
-    const customKey = (customKeyFromHeader && customKeyFromHeader !== "null" && customKeyFromHeader !== "undefined" && customKeyFromHeader.trim().length > 10) ? customKeyFromHeader.trim() : null;
-    
-    const apiKey = customKey || process.env.GEMINI_API_KEY;
+    const apiKey = getApiKey(req);
 
     if (!apiKey) {
       return res.status(401).json({ error: "Gemini API Key is missing. Please set it in environment variables or settings." });
@@ -91,10 +92,7 @@ app.post("/api/translate-batch", async (req, res) => {
       return res.status(400).json({ error: "Texts array is required" });
     }
 
-    console.log(`Batch translation request (${texts.length} items) using ${customKey ? 'custom' : 'system'} key`);
-
-    const client = customKey ? getAiClient(customKey) : ai;
-
+    const client = getAiClient(apiKey);
     const response = await client.models.generateContent({
       model: MODEL,
       contents: `You are a professional subtitle translator and editor specializing in Kurdish (Sorani).
@@ -107,7 +105,7 @@ app.post("/api/translate-batch", async (req, res) => {
       4. ORDER: Maintain the exact order of the provided English lines.
       5. COUNT: You MUST return exactly ${texts.length} strings in the array.
       6. NEWLINES: If an input string has a line break, the translation MUST also have a line break.
-      7. DO NOT ECHO: Do not return the English text. If a line cannot be translated, provide the best possible transliteration or professional adaptation in Sorani Kurdish.
+      7. DO NOT ECHO: Do not return the English text.
       
       INPUT ENGLISH LINES:
       ${JSON.stringify(texts)}`,
@@ -121,18 +119,31 @@ app.post("/api/translate-batch", async (req, res) => {
       }
     });
 
-    let result;
     try {
-      result = JSON.parse(response.text || "[]");
-    } catch (e) {
-      const match = (response.text || "").match(/\[[\s\S]*\]/);
-      result = match ? JSON.parse(match[0]) : [];
+      const resultText = response.text || "[]";
+      let result = JSON.parse(resultText);
+      
+      // Validation to ensure it's an array of strings
+      if (!Array.isArray(result)) {
+        const match = resultText.match(/\[[\s\S]*\]/);
+        result = match ? JSON.parse(match[0]) : [];
+      }
+      
+      res.json({ translations: result });
+    } catch (parseError: any) {
+      console.error("Parse error:", parseError, response.text);
+      res.status(500).json({ 
+        error: "Failed to parse model response", 
+        raw: response.text 
+      });
     }
-
-    res.json({ translations: result });
   } catch (error: any) {
     console.error("Batch translation error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ 
+      error: error.message || "Internal Server Error",
+      details: error.details,
+      status: error.status
+    });
   }
 });
 
