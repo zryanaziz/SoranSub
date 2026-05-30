@@ -32,7 +32,8 @@ import { SubtitleItem } from './types';
 import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stripFormatting } from './lib/subtitle-utils';
 import { 
   translateToKurdishSorani, 
-  jointTranslateRefineBatch
+  jointTranslateRefineBatch,
+  setManualApiKey
 } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
@@ -48,6 +49,13 @@ export default function App() {
   const [showFinishedMessage, setShowFinishedMessage] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
+  const [showKeyInput, setShowKeyInput] = useState(false);
+  const [manualKey, setManualKey] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('gemini_api_key') || '';
+    }
+    return '';
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -543,6 +551,18 @@ export default function App() {
     setSelectedIndex(idx);
   };
 
+  const handleSaveManualKey = () => {
+    if (manualKey.trim()) {
+      setManualApiKey(manualKey.trim());
+      setShowKeyInput(false);
+      setStatus({ type: 'success', message: 'API Key saved successfully!' });
+    } else {
+      setManualApiKey('');
+      setShowKeyInput(false);
+      setStatus({ type: 'info', message: 'Manual API Key cleared. Using default.' });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] flex flex-col relative">
       {/* Global Progress Bar */}
@@ -591,8 +611,11 @@ export default function App() {
 
           <div className="flex flex-col items-end md:hidden">
             <div className="flex flex-col items-end gap-1 mb-2">
-              <span className="text-[10px] font-mono text-green-600 flex items-center gap-1">
-                <Sparkles size={10} /> AI Connected
+              <span className={cn(
+                "text-[10px] font-mono flex items-center gap-1",
+                manualKey ? "text-blue-600" : "text-green-600"
+              )}>
+                <Sparkles size={10} /> {manualKey ? "Custom AI active" : "AI Connected"}
               </span>
             </div>
             <div className="text-[10px] font-mono uppercase opacity-70 flex items-center gap-2">
@@ -622,9 +645,14 @@ export default function App() {
 
 
         <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
-          <div className="flex gap-2">
-            
-          </div>
+          <button 
+            onClick={() => setShowKeyInput(true)}
+            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] text-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+            title="API Key Settings"
+          >
+            <Sparkles size={14} />
+          </button>
+          
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -887,10 +915,53 @@ export default function App() {
         </AnimatePresence>
 
         <div className="flex items-center gap-2 md:gap-4">
-          <span className="hidden xs:inline">Gemini 3 Flash</span>
-          <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-green-500 animate-pulse" />
+          <span className="hidden xs:inline">Gemini 2.0 Flash {manualKey && "(Custom Key)"}</span>
+          <div className={cn(
+            "w-1.5 h-1.5 md:w-2 md:h-2 rounded-full animate-pulse",
+            manualKey ? "bg-blue-500" : "bg-green-500"
+          )} />
         </div>
       </footer>
+
+      {/* API Key Input Modal */}
+      <AnimatePresence>
+        {showKeyInput && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#141414] bg-opacity-80 p-4 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#E4E3E0] border border-[#141414] p-6 max-w-md w-full shadow-2xl"
+            >
+              <h3 className="text-lg font-serif italic mb-4">Enter Gemini API Key</h3>
+              <p className="text-xs opacity-70 mb-4 font-mono leading-relaxed">
+                Enter your Gemini API key manually if you want to use your own quota. If left empty, the server-side key will be used.
+              </p>
+              <input 
+                type="password"
+                value={manualKey}
+                onChange={(e) => setManualKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="w-full bg-transparent border border-[#141414] p-2 text-xs font-mono mb-6 focus:outline-none focus:ring-1 focus:ring-[#141414]"
+              />
+              <div className="flex justify-end gap-3">
+                <button 
+                  onClick={() => setShowKeyInput(false)}
+                  className="px-4 py-2 text-[10px] uppercase tracking-widest font-mono opacity-50 hover:opacity-100"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSaveManualKey}
+                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest font-mono hover:bg-opacity-90"
+                >
+                  Save Key
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Range Selection Modal */}
       <AnimatePresence>

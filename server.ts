@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
-const MODEL = "gemini-3.5-flash";
+const MODEL = "gemini-2.0-flash";
 
 const BATCH_SCHEMA = {
   type: Type.ARRAY,
@@ -32,12 +32,18 @@ async function startServer() {
   // API Routes
   app.post("/api/translate", async (req, res) => {
     try {
+      const customKey = req.headers['x-api-key'] as string;
       const { text } = req.body;
       if (!text) {
         return res.status(400).json({ error: "Text is required" });
       }
 
-      const response = await ai.models.generateContent({
+      const client = customKey ? new GoogleGenAI({
+        apiKey: customKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      }) : ai;
+
+      const response = await client.models.generateContent({
         model: MODEL,
         contents: text,
         config: {
@@ -54,12 +60,18 @@ async function startServer() {
 
   app.post("/api/translate-batch", async (req, res) => {
     try {
+      const customKey = req.headers['x-api-key'] as string;
       const { texts } = req.body;
       if (!texts || !Array.isArray(texts)) {
         return res.status(400).json({ error: "Texts array is required" });
       }
 
-      const response = await ai.models.generateContent({
+      const client = customKey ? new GoogleGenAI({
+        apiKey: customKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      }) : ai;
+
+      const response = await client.models.generateContent({
         model: MODEL,
         contents: `You are a professional subtitle translator and editor specializing in Kurdish (Sorani).
         Your task is to TRANSLATE and REFINE the following ${texts.length} English subtitle lines.

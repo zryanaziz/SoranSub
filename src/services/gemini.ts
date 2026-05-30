@@ -32,14 +32,21 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Pr
   }
 }
 
+let manualApiKey: string | null = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
+
 /**
  * Single block translation
  */
 export async function translateToKurdishSorani(text: string): Promise<string> {
   return withRetry(async () => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (manualApiKey) {
+      headers['x-api-key'] = manualApiKey;
+    }
+
     const response = await fetch("/api/translate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ text }),
     });
 
@@ -58,9 +65,14 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
  */
 export async function jointTranslateRefineBatch(texts: string[]): Promise<string[]> {
   return withRetry(async () => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (manualApiKey) {
+      headers['x-api-key'] = manualApiKey;
+    }
+
     const response = await fetch("/api/translate-batch", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ texts }),
     });
 
@@ -88,8 +100,12 @@ export async function jointTranslateRefineBatch(texts: string[]): Promise<string
   });
 }
 
-// Mocked for compatibility with App.tsx if it still calls it
-export function setManualApiKey(_key: string) {
-  // Manual API key handling is now managed by the platform via environment variables on the server.
-  console.info("Manual API key setting is disabled. Using server-side configuration.");
+// Manual API key handling
+export function setManualApiKey(key: string) {
+  manualApiKey = key || null;
+  if (key) {
+    localStorage.setItem('gemini_api_key', key);
+  } else {
+    localStorage.removeItem('gemini_api_key');
+  }
 }
