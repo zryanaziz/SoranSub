@@ -7,21 +7,26 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
-const MODEL = "gemini-3.5-flash";
+const MODEL = "gemini-1.5-flash";
 
 const BATCH_SCHEMA = {
   type: Type.STRING,
 };
 
+const app = express();
+
 async function startServer() {
-  const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
 
   app.use(express.json());
 
   // Health check
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", model: MODEL });
+    res.json({ 
+      status: "ok", 
+      model: MODEL,
+      hasKey: !!process.env.GEMINI_API_KEY
+    });
   });
 
   const ai = new GoogleGenAI({
@@ -39,6 +44,12 @@ async function startServer() {
       const customKeyFromHeader = req.headers['x-api-key'] as string;
       const customKey = (customKeyFromHeader && customKeyFromHeader !== "null" && customKeyFromHeader !== "undefined" && customKeyFromHeader.trim().length > 10) ? customKeyFromHeader.trim() : null;
       
+      const apiKey = customKey || process.env.GEMINI_API_KEY;
+
+      if (!apiKey) {
+        return res.status(401).json({ error: "Gemini API Key is missing. Please set it in environment variables or settings." });
+      }
+
       const { text } = req.body;
       if (!text) {
         return res.status(400).json({ error: "Text is required" });
@@ -71,6 +82,12 @@ async function startServer() {
       const customKeyFromHeader = req.headers['x-api-key'] as string;
       const customKey = (customKeyFromHeader && customKeyFromHeader !== "null" && customKeyFromHeader !== "undefined" && customKeyFromHeader.trim().length > 10) ? customKeyFromHeader.trim() : null;
       
+      const apiKey = customKey || process.env.GEMINI_API_KEY;
+
+      if (!apiKey) {
+        return res.status(401).json({ error: "Gemini API Key is missing. Please set it in environment variables or settings." });
+      }
+
       const { texts } = req.body;
       if (!texts || !Array.isArray(texts)) {
         return res.status(400).json({ error: "Texts array is required" });
@@ -139,9 +156,13 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
 }
 
 startServer();
+
+export default app;
