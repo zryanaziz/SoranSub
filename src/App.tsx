@@ -70,14 +70,23 @@ export default function App() {
       try {
         setIsSaving(true);
         const content = stringifySRT(subtitles, true); // Save the translation
+        
+        // Force .srt extension and append .ku for translation clarity
+        let syncName = fileName;
+        if (syncName.includes('.')) {
+          syncName = syncName.substring(0, syncName.lastIndexOf('.')) + '.ku.srt';
+        } else {
+          syncName = syncName + '.ku.srt';
+        }
+
         const response = await fetch('/api/save-subtitles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileName, content })
+          body: JSON.stringify({ fileName: syncName, content })
         });
         
         if (response.ok) {
-          setStatus({ type: 'success', message: `Synced ${fileName} to workspace.` });
+          setStatus({ type: 'success', message: `Synced ${syncName} to workspace.` });
         }
       } catch (error) {
         console.error("Failed to sync to workspace:", error);
@@ -162,8 +171,9 @@ export default function App() {
   const handleCleanUpSubtitles = () => {
     if (subtitles.length === 0) return;
     
-    // Regex for [Square], (Parentheses), and <Tags> and Music Symbols
-    const bracketRegex = /\[[\s\S]*?\]|\([\s\S]*?\)|\♪[\s\S]*?\♪|<[^>]*>|[♪♫]/g;
+    // Improved Regex: Only remove brackets if they seem to be SDH markers (sound effects, speaker names)
+    // We preserve them if they might contain actual dialogue text (especially Kurdish)
+    const sdhRegex = /\[[A-Z0-9\s.,!?-]{2,}\]|\([A-Z0-9\s.,!?-]{2,}\)|\♪[\s\S]*?\♪|<[^>]*>|[♪♫]/gi;
     
     let tagCount = 0;
     const initialCount = subtitles.length;
@@ -172,26 +182,51 @@ export default function App() {
     const swapSymbols = (str: string) => {
       if (!str) return str;
       let s = str.trim();
+
+      // Detect if the string contains Kurdish/Arabic characters
+      const hasArabicChars = /[\u0600-\u06FF]/.test(s);
       
+      if (hasArabicChars) {
+        // 1. Conversion of English to Kurdish punctuation
+        s = s.replace(/,/g, '،')
+             .replace(/\?/g, '؟')
+             .replace(/;/g, '؛');
+
+        // 2. Mirror brackets (The actual "Symbol Swap" for RTL/LTR compatibility)
+        const mirrorMap: Record<string, string> = {
+          '(': ')',
+          ')': '(',
+          '[': ']',
+          ']': '[',
+          '{': '}',
+          '}': '{',
+          '<': '>',
+          '>': '<',
+          '«': '»',
+          '»': '«'
+        };
+        
+        let mirrored = "";
+        for (let i = 0; i < s.length; i++) {
+          mirrored += mirrorMap[s[i]] || s[i];
+        }
+        s = mirrored;
+      }
+      
+      // 3. Move leading punctuation to the end
       // Symbols that should NOT be at the start of a Kurdish Sorani subtitle
-      // We move them to the end because in Sorani Kurdish punctuation follows the sentence
-      const leadingSymbols = [',', '...', '.', '!', '?', '-', '،', '؛', '؟'];
+      const leadingSymbols = ['...', '..', '.', '!', '؟', '،', '؛', '-', ':', '؟!', '!؟'];
       
       let found = true;
-      while (found) {
+      let iterations = 0;
+      while (found && iterations < 10) { // Safety limit
         found = false;
+        iterations++;
         for (const symbol of leadingSymbols) {
           if (s.startsWith(symbol)) {
-            // Special case for ellipses ... to ensure we catch it all
-            if (symbol === '...' && s.startsWith('...')) {
-              s = s.substring(3).trim() + '...';
-              found = true;
-              break;
-            } else if (s.startsWith(symbol)) {
-              s = s.substring(symbol.length).trim() + symbol;
-              found = true;
-              break;
-            }
+            s = s.substring(symbol.length).trim() + symbol;
+            found = true;
+            break;
           }
         }
       }
@@ -201,8 +236,9 @@ export default function App() {
 
     // Step 1: Strip tags and swap symbols
     const step1 = subtitles.map(item => {
-      let newText = item.text.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim();
-      let newTranslated = item.translatedText ? item.translatedText.replace(bracketRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
+      // Remove SDH markers but keep brackets if they might be dialogue
+      let newText = item.text.replace(sdhRegex, '').replace(/[ \t]+/g, ' ').trim();
+      let newTranslated = item.translatedText ? item.translatedText.replace(sdhRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
       
       // Character swap logic
       newText = swapSymbols(newText);
@@ -564,27 +600,23 @@ export default function App() {
     const a = document.createElement('a');
     a.href = url;
     
-    let downloadName = fileName || (useTranslation ? 'translated_subtitles.srt' : 'original_subtitles.srt');
+    let downloadName = fileName || (useTranslation ? 'translated.srt' : 'original.srt');
     
-    // Inject .ku before extension for better player recognition
-    if (downloadName.includes('.')) {
-      const parts = downloadName.split('.');
-      const ext = parts.pop();
-      
-      // Remove existing language tags if present (e.g., .en, .EN, .fr)
-      if (parts.length > 0) {
-        const lastBasePart = parts[parts.length - 1];
-        // Regex matches common 2-3 letter language codes
-        if (/^[a-z]{2,3}(-[a-z]{2,4})?$/i.test(lastBasePart)) {
-          parts.pop();
-        }
+    // Inject .ku and ensure .srt extension
+    if (useTranslation) {
+      if (downloadName.includes('.')) {
+        downloadName = downloadName.substring(0, downloadName.lastIndexOf('.')) + '.ku.srt';
+      } else {
+        downloadName = downloadName + '.ku.srt';
       }
-      
-      downloadName = parts.join('.') + '.ku.' + ext;
-    } else {
-      downloadName += '.ku.srt';
+    } else if (!downloadName.toLowerCase().endsWith('.srt')) {
+      // Ensure original also ends in .srt if we are converting it
+      if (downloadName.includes('.')) {
+        downloadName = downloadName.substring(0, downloadName.lastIndexOf('.')) + '.srt';
+      } else {
+        downloadName = downloadName + '.srt';
+      }
     }
-    
     a.download = downloadName;
     document.body.appendChild(a);
     a.click();

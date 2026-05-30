@@ -176,9 +176,10 @@ export function parseSubtitle(content: string, fileName: string): SubtitleItem[]
 
 export function stringifySRT(items: SubtitleItem[], useTranslation = false): string {
   return items
-    .map((item) => {
+    .map((item, idx) => {
       const text = useTranslation ? (item.translatedText || item.text) : item.text;
-      return `${item.index}\n${item.startTime} --> ${item.endTime}\n${text}\n`;
+      // Ensure index is progressive (1, 2, 3...) regardless of internal indices
+      return `${idx + 1}\n${item.startTime} --> ${item.endTime}\n${text}\n`;
     })
     .join('\n');
 }
