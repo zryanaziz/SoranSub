@@ -11,7 +11,7 @@ export default defineConfig(({mode}) => {
       react(), 
       tailwindcss(),
       nodePolyfills({
-        include: ['zlib', 'stream', 'buffer', 'events'],
+        include: ['buffer', 'stream', 'util', 'zlib', 'events'],
         globals: {
           Buffer: true,
           global: true,

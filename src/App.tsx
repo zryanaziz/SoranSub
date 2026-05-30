@@ -10,24 +10,15 @@ import {
   Download, 
   Languages, 
   Trash2, 
-  Plus, 
-  Save, 
   CheckCircle2, 
   AlertCircle,
   Loader2,
-  Video,
   Search,
   X,
-  Play,
-  Pause,
-  RotateCcw,
-  RotateCw,
-  Maximize2,
   Sparkles,
   Clock,
   Type,
   ChevronRight,
-  FileText,
   Eraser
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -36,12 +27,12 @@ import { twMerge } from 'tailwind-merge';
 
 import { SubtitleItem } from './types';
 import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stripFormatting } from './lib/subtitle-utils';
+import { extractSubtitlesFromMKV } from './lib/mkv-extractor';
 import { 
   translateToKurdishSorani, 
   jointTranslateRefineBatch,
   setManualApiKey,
 } from './services/gemini';
-import { SubtitleParser } from 'matroska-subtitles';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -56,26 +47,17 @@ export default function App() {
   const [showFinishedMessage, setShowFinishedMessage] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
-  const [activeTab, setActiveTab] = useState<'list' | 'video'>('list');
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [manualKey, setManualKey] = useState('');
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [videoType, setVideoType] = useState<string>('');
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
-  const [isPlaying, setIsPlaying] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
   const [rangeFrom, setRangeFrom] = useState<string>('1');
   const [rangeTo, setRangeTo] = useState<string>('');
   const [syncOffset, setSyncOffset] = useState('0');
   const [selectedAction, setSelectedAction] = useState<string>('');
-  const [mkvTracks, setMkvTracks] = useState<{ number: number; type: string; language: string; name: string; content?: string }[]>([]);
-  const [showMkvModal, setShowMkvModal] = useState(false);
-  const [mkvFile, setMkvFile] = useState<File | null>(null);
 
   const handleReplaceNext = () => {
     if (!searchQuery.trim()) return;
@@ -144,96 +126,6 @@ export default function App() {
       setStatus({ type: 'success', message: `Replaced ${count} occurrences.` });
     } else {
       setStatus({ type: 'info', message: 'No matches found to replace.' });
-    }
-  };
-
-  const handleMkvUpload = async (file: File) => {
-    setMkvFile(file);
-    setStatus({ type: 'info', message: 'Scanning MKV for subtitle tracks...' });
-    
-    try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const buffer = e.target?.result as ArrayBuffer;
-        const demuxer = new SubtitleParser();
-        const detectedTracks: any[] = [];
-        const subtitleData: Record<number, string[]> = {};
-
-        demuxer.on('tracks', (tracks: any[]) => {
-          tracks.forEach(track => {
-            detectedTracks.push({
-              number: track.number,
-              type: track.type,
-              language: track.language || 'und',
-              name: track.name || `Track ${track.number}`
-            });
-          });
-        });
-
-        demuxer.on('subtitle', (subtitle: any, trackNumber: number) => {
-          const { text, time, duration } = subtitle;
-          const start = time / 1000;
-          const end = (time + duration) / 1000;
-          
-          // Construct a valid SRT block
-          const index = (subtitleData[trackNumber]?.length || 0) + 1;
-          const srtLine = `${index}\n${formatTime(start)} --> ${formatTime(end)}\n${text}\n\n`;
-          
-          if (subtitleData[trackNumber]) {
-            subtitleData[trackNumber].push(srtLine);
-          } else {
-            subtitleData[trackNumber] = [srtLine];
-          }
-        });
-
-        demuxer.write(new Uint8Array(buffer));
-        
-        // Small delay to ensure all stream events have been processed
-        setTimeout(() => {
-          if (detectedTracks.length === 0) {
-            setStatus({ type: 'info', message: 'No subtitle tracks found in this MKV file.' });
-            return;
-          }
-
-          const tracksWithContent = detectedTracks.map(t => ({
-            ...t,
-            content: subtitleData[t.number]?.join('') || ''
-          }));
-
-          const validTracks = tracksWithContent.filter(t => t.content.length > 0);
-          setMkvTracks(validTracks);
-          
-          if (validTracks.length === 0) {
-            setStatus({ type: 'info', message: 'Subtitle tracks found, but they could not be extracted (possibly bitmap-based or incompatible codec).' });
-            return;
-          }
-
-          setShowMkvModal(true);
-          setStatus(null);
-        }, 200);
-      };
-      reader.readAsArrayBuffer(file);
-    } catch (err) {
-      console.error("MKV Error", err);
-      setStatus({ type: 'error', message: 'Error scanning MKV file tracks.' });
-    }
-  };
-
-  const selectMkvTrack = (track: any) => {
-    if (!track.content) {
-      setStatus({ type: 'error', message: 'This track is empty or could not be extracted.' });
-      return;
-    }
-
-    try {
-      setFileName(`${mkvFile?.name} [${track.language}]`);
-      const parsed = parseSubtitle(track.content, mkvFile?.name || 'mkv_sub');
-      setSubtitles(parsed);
-      setSelectedIndex(parsed.length > 0 ? 0 : null);
-      setShowMkvModal(false);
-      setStatus({ type: 'success', message: `Extracted ${parsed.length} subtitles from MKV track.` });
-    } catch (err) {
-      setStatus({ type: 'error', message: 'Failed to parse extracted subtitle track.' });
     }
   };
 
@@ -314,7 +206,6 @@ export default function App() {
   const handleGo = () => {
     switch (selectedAction) {
       case 'sync': setShowSyncModal(true); break;
-      case 'selectVideo': videoFileInputRef.current?.click(); break;
       case 'cleanUp': handleCleanUpSubtitles(); break;
       default: break;
     }
@@ -341,9 +232,6 @@ export default function App() {
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoFileInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const videoContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -351,25 +239,11 @@ export default function App() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (videoRef.current) {
-          if (isPlaying) videoRef.current.pause();
-          else videoRef.current.play();
-        }
-      } else if (e.code === 'ArrowLeft') {
-        e.preventDefault();
-        handleSkip(-5);
-      } else if (e.code === 'ArrowRight') {
-        e.preventDefault();
-        handleSkip(5);
-      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying]);
+  }, []);
 
   // Auto-save to localStorage
   useEffect(() => {
@@ -489,7 +363,7 @@ export default function App() {
     }
   };
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (file) {
       const ext = file.name.toLowerCase().split('.').pop();
@@ -499,6 +373,40 @@ export default function App() {
           type: 'error', 
           message: '.sup files are bitmap-based (PGS) and cannot be edited as text. Please convert them to .srt or .vtt first.' 
         });
+        return;
+      }
+
+      if (ext === 'mkv') {
+        setStatus({ type: 'info', message: `Extracting subtitles from MKV: ${file.name}...` });
+        try {
+          const mkvResults = await extractSubtitlesFromMKV(file);
+          if (mkvResults.length === 0) {
+            setStatus({ type: 'error', message: 'No text subtitle tracks found in this MKV file.' });
+            return;
+          }
+          
+          // For simplicity, we take the first available track.
+          // In a more complex app, we'd show a modal to choose.
+          const bestTrack = mkvResults[0];
+          const content = bestTrack.content;
+          
+          if (!content || content.trim().length === 0) {
+            setStatus({ type: 'error', message: 'Found subtitle track but it appears to be empty or in an unsupported format.' });
+            return;
+          }
+
+          const parsed = parseSubtitle(content, file.name);
+          setSubtitles(parsed);
+          setSelectedIndex(parsed.length > 0 ? 0 : null);
+          setFileName(file.name);
+          setStatus({ 
+            type: 'success', 
+            message: `Extracted track ${bestTrack.track.number} (${bestTrack.track.language}) from MKV.` 
+          });
+        } catch (err: any) {
+          console.error("MKV Extraction failed:", err);
+          setStatus({ type: 'error', message: `Failed to extract from MKV: ${err.message || 'Unknown error'}` });
+        }
         return;
       }
 
@@ -517,81 +425,9 @@ export default function App() {
           }
         };
         reader.readAsText(file);
-      } else if (file.type.startsWith('video/') || ['mp4', 'webm', 'ogg', 'mkv'].includes(ext || '')) {
-        const url = URL.createObjectURL(file);
-        setVideoUrl(url);
-        setVideoType(file.type || `video/${ext}`);
-        
-        if (ext === 'mkv') {
-          handleMkvUpload(file);
-        } else {
-          setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
-        }
-        
-        if (isMobileView) setActiveTab('video');
       }
     }
-  }, [isMobileView]);
-
-  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const ext = file.name.toLowerCase().split('.').pop();
-      const url = URL.createObjectURL(file);
-      setVideoUrl(url);
-      setVideoType(file.type || `video/${ext}`);
-      
-      if (ext === 'mkv') {
-        setStatus({ 
-          type: 'info', 
-          message: 'MKV files have limited browser support. If you hear sound but see no image, please convert to MP4 (H.264).' 
-        });
-      } else {
-        setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
-      }
-      
-      if (isMobileView) setActiveTab('video');
-    }
-  };
-
-  const jumpToTime = (seconds: number) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = seconds;
-      // videoRef.current.play();
-      setIsPlaying(false);
-    }
-  };
-
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      const time = videoRef.current.currentTime;
-      setCurrentTime(time);
-      
-      if (videoRef.current.duration && duration !== videoRef.current.duration) {
-        setDuration(videoRef.current.duration);
-      }
-      
-      // Auto-select subtitle based on time
-      const activeIdx = subtitles.findIndex(s => time >= s.startTimeSeconds && time <= s.endTimeSeconds);
-      if (activeIdx !== -1 && activeIdx !== selectedIndex) {
-        setSelectedIndex(activeIdx);
-      }
-    }
-  };
-
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(e.target.value);
-    if (videoRef.current) {
-      videoRef.current.currentTime = time;
-      setCurrentTime(time);
-    }
-  };
-
-  const handleSkip = (seconds: number) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime += seconds;
-    }
-  };
+  }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
     onDrop, 
@@ -599,8 +435,8 @@ export default function App() {
       'text/plain': ['.srt', '.vtt', '.sub', '.ass'],
       'application/x-subrip': ['.srt'],
       'text/vtt': ['.vtt'],
-      'video/*': ['.mp4', '.webm', '.ogg', '.mkv'],
-      'application/octet-stream': ['.sup']
+      'application/octet-stream': ['.sup'],
+      'video/x-matroska': ['.mkv']
     },
     multiple: false 
   } as any);
@@ -795,17 +631,6 @@ export default function App() {
     }
   };
 
-  const toggleFullScreen = () => {
-    if (!videoContainerRef.current) return;
-    if (!document.fullscreenElement) {
-      videoContainerRef.current.requestFullscreen().catch(err => {
-        console.error(`Error attempting to enable full-screen mode: ${err.message}`);
-      });
-    } else {
-      document.exitFullscreen();
-    }
-  };
-
   const filteredSubtitles = React.useMemo(() => {
     if (!searchQuery.trim()) return subtitles;
 
@@ -850,15 +675,11 @@ export default function App() {
     });
   }, [subtitles, searchQuery]);
 
-  const currentSubtitle = subtitles.find(s => currentTime >= s.startTimeSeconds && currentTime <= s.endTimeSeconds);
   const selectedItem = selectedIndex !== null ? subtitles[selectedIndex] : null;
   const translatedCount = subtitles.filter(s => s.translatedText).length;
 
   const handleSelectItem = (idx: number) => {
     setSelectedIndex(idx);
-    if (isMobileView) {
-      setActiveTab('editor');
-    }
   };
 
   return (
@@ -944,22 +765,13 @@ export default function App() {
                 </button>
               )}
             </div>
-            {(subtitles.length > 0 || videoUrl) && (
-              <div className="flex border border-[#141414] rounded-sm overflow-hidden mt-1">
+            {(subtitles.length > 0) && (
+              <div className="flex border border-[#141414] rounded-sm overflow-hidden mt-1 md:hidden">
                 <button 
-                  onClick={() => setActiveTab('list')}
-                  className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors", activeTab === 'list' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5")}
+                  className="px-3 py-1 text-[10px] uppercase font-mono bg-[#141414] text-[#E4E3E0]"
                 >
                   List
                 </button>
-                {videoUrl && (
-                  <button 
-                    onClick={() => setActiveTab('video')}
-                    className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors", activeTab === 'video' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5")}
-                  >
-                    Video
-                  </button>
-                )}
               </div>
             )}
           </div>
@@ -999,19 +811,12 @@ export default function App() {
             type="file" 
             ref={fileInputRef} 
             className="hidden" 
-            accept=".srt,.vtt,.sub,.ass" 
+            accept=".srt,.vtt,.sub,.ass,.mkv" 
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
                 onDrop([e.target.files[0]]);
               }
             }}
-          />
-          <input 
-            type="file" 
-            ref={videoFileInputRef} 
-            className="hidden" 
-            accept="video/*" 
-            onChange={handleVideoUpload}
           />
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
@@ -1076,14 +881,6 @@ export default function App() {
           </button>
 
           <button 
-            onClick={() => videoFileInputRef.current?.click()}
-            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
-            title="Select Video File"
-          >
-            <Video size={14} />
-          </button>
-
-          <button 
             onClick={() => {
               setRangeTo(subtitles.length.toString());
               setShowRangeModal(true);
@@ -1110,11 +907,8 @@ export default function App() {
 
       {/* Main Layout */}
       <main className="flex flex-1 overflow-hidden relative">
-        {/* Left Pane: Subtitle List */}
-        <div className={cn(
-          "border-r border-[#141414] flex flex-col transition-all duration-300",
-          activeTab === 'list' ? (isMobileView ? "w-full" : "w-1/2") : "w-0 opacity-0 pointer-events-none"
-        )}>
+        {/* Subtitle List */}
+        <div className="flex-1 border-r border-[#141414] flex flex-col transition-all duration-300">
           {subtitles.length === 0 ? (
             <div 
               {...getRootProps()} 
@@ -1125,7 +919,7 @@ export default function App() {
             >
               <input {...getInputProps()} />
               <Upload size={40} className="mb-4 opacity-20 md:size-12" />
-              <h2 className="font-serif italic text-xl md:text-2xl mb-2 text-center">Drop Subtitles or Video here</h2>
+              <h2 className="font-serif italic text-xl md:text-2xl mb-2 text-center">Drop Subtitles here</h2>
               <p className="text-[10px] md:text-xs font-mono opacity-50 uppercase tracking-widest text-center">Supports SRT, VTT, SUB (MicroDVD)</p>
             </div>
           ) : (
@@ -1190,7 +984,6 @@ export default function App() {
                 {filteredSubtitles.map((item) => {
                   const idx = subtitles.findIndex(s => s.id === item.id);
                   const isActive = selectedIndex === idx;
-                  const isCurrentlyPlaying = currentTime >= item.startTimeSeconds && currentTime <= item.endTimeSeconds;
 
                   return (
                     <div 
@@ -1198,13 +991,9 @@ export default function App() {
                       id={`sub-${idx}`}
                       className={cn(
                         "grid grid-cols-[40px_1fr_1fr] border-b border-[#141414] transition-colors group relative",
-                        isActive ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:bg-opacity-5",
-                        isCurrentlyPlaying && !isActive && "bg-orange-500 bg-opacity-10"
+                        isActive ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:bg-opacity-5"
                       )}
                     >
-                      {isCurrentlyPlaying && (
-                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-orange-500" />
-                      )}
                       <div 
                         onClick={() => handleSelectItem(idx)}
                         className={cn(
@@ -1246,159 +1035,14 @@ export default function App() {
                   );
                 })}
               </div>
-            </div>
-          )}
-        </div>
 
-        <div className={cn(
-          "bg-[#F0EFED] flex flex-col relative transition-all duration-300",
-          activeTab === 'list' && !isMobileView ? "w-1/2" : (activeTab === 'video' ? "w-full" : "hidden")
-        )}>
-          {/* Video Preview Section */}
-          <div 
-            ref={videoContainerRef}
-            className={cn(
-              "bg-black relative group transition-all duration-300 flex flex-col items-center justify-center overflow-hidden min-h-[300px] md:min-h-[400px]",
-              activeTab === 'video' ? "flex-1" : "aspect-video border-b border-[#141414]"
-            )}
-          >
-            {videoUrl ? (
-              <>
-                <video 
-                  key={videoUrl}
-                  ref={videoRef}
-                  className="w-full h-full object-contain"
-                  onTimeUpdate={handleTimeUpdate}
-                  onPlay={() => setIsPlaying(true)}
-                  onPause={() => setIsPlaying(false)}
-                  onClick={() => isPlaying ? videoRef.current?.pause() : videoRef.current?.play()}
-                  onError={(e) => {
-                    console.error("Video error:", e);
-                    setStatus({ 
-                      type: 'error', 
-                      message: 'Video playback failed. This is usually due to an unsupported codec (like H.265/HEVC). Try converting to H.264 MP4.' 
-                    });
-                  }}
-                  playsInline
-                  crossOrigin="anonymous"
-                >
-                  <source src={videoUrl} type={videoType} />
-                </video>
-                
-                {/* Codec Warning Overlay (Only if sound but no image is common) */}
-                {videoType.includes('mkv') && isPlaying && (
-                  <div className="absolute top-4 left-4 right-4 bg-yellow-500/90 text-black text-[10px] p-2 rounded-sm font-mono uppercase tracking-widest z-50 animate-pulse pointer-events-none">
-                    Warning: MKV detected. If you see no image, convert to MP4.
-                  </div>
-                )}
-                
-                {/* Top Overlay: Original Text */}
-                <div className="absolute top-10 left-0 right-0 flex flex-col items-center pointer-events-none px-4 text-center">
-                  {currentSubtitle && (
-                    <div className="bg-black bg-opacity-60 px-4 py-2 rounded-sm max-w-[80%]">
-                      <p className="text-white text-sm md:text-base font-sans">{currentSubtitle.text}</p>
-                    </div>
-                  )}
+              {showFinishedMessage && (
+                <div className="p-4 bg-green-500/10 border-t border-[#141414] animate-in fade-in slide-in-from-bottom-1 duration-500">
+                  <p className="text-center text-green-700 font-mono text-[10px] md:text-xs uppercase tracking-[0.2em] font-black">
+                    Translate and Refinement is Finished
+                  </p>
                 </div>
-
-                {/* Bottom Overlay: Translated Text (Editable) */}
-                <div className="absolute bottom-16 left-0 right-0 flex flex-col items-center px-4 text-center">
-                  {currentSubtitle && (
-                    <div className="bg-black bg-opacity-70 px-4 py-2 rounded-sm max-w-[80%] border border-yellow-500/30">
-                      <textarea
-                        value={currentSubtitle.translatedText || ''}
-                        onChange={(e) => handleUpdateText(currentSubtitle.id, e.target.value, true)}
-                        placeholder="Type translation here..."
-                        className="bg-transparent text-yellow-400 text-[22px] font-bold font-sans w-full border-none focus:outline-none resize-none text-center min-w-[200px]"
-                        dir="auto"
-                        rows={2}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Custom Controls Overlay */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-4 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-3">
-                  {/* Seekbar */}
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-mono text-white w-12 text-right">{formatTime(currentTime).split(',')[0]}</span>
-                    <input 
-                      type="range"
-                      min={0}
-                      max={duration || 0}
-                      step={0.1}
-                      value={currentTime}
-                      onChange={handleSeek}
-                      className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-yellow-500"
-                    />
-                    <span className="text-[10px] font-mono text-white w-12">{formatTime(duration || 0).split(',')[0]}</span>
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-6">
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleSkip(-5); }}
-                        className="text-white hover:text-yellow-400 transition-colors"
-                        title="Back 5s"
-                      >
-                        <RotateCcw size={20} />
-                      </button>
-                      
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); isPlaying ? videoRef.current?.pause() : videoRef.current?.play(); }}
-                        className="text-white hover:text-yellow-400 transition-colors"
-                      >
-                        {isPlaying ? <Pause size={24} /> : <Play size={24} />}
-                      </button>
-
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleSkip(5); }}
-                        className="text-white hover:text-yellow-400 transition-colors"
-                        title="Forward 5s"
-                      >
-                        <RotateCw size={20} />
-                      </button>
-                    </div>
-
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); toggleFullScreen(); }}
-                      className="text-white hover:text-yellow-400 transition-colors"
-                      title="Toggle Fullscreen"
-                    >
-                      <Maximize2 size={20} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                  <div className="bg-black bg-opacity-50 p-6 rounded-full pointer-events-auto cursor-pointer" onClick={(e) => {
-                    e.stopPropagation();
-                    isPlaying ? videoRef.current?.pause() : videoRef.current?.play();
-                  }}>
-                    {isPlaying ? <Pause size={48} className="text-white" /> : <Play size={48} className="text-white" />}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center text-[#E4E3E0] opacity-30 p-8 text-center">
-                <Video size={48} className="mb-4" />
-                <p className="text-xs font-mono uppercase tracking-widest">No video loaded</p>
-                <p className="text-[8px] mt-2 max-w-xs font-mono uppercase tracking-tighter">Use H.264 MP4 for best compatibility. MKV/H.265 may play sound only.</p>
-                <button 
-                  onClick={() => videoFileInputRef.current?.click()}
-                  className="mt-4 px-4 py-2 border border-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#E4E3E0] hover:text-black transition-colors"
-                >
-                  Upload Video
-                </button>
-              </div>
-            )}
-          </div>
-
-          {showFinishedMessage && (
-            <div className="p-4 bg-green-500/10 border-b border-[#141414] animate-in fade-in slide-in-from-top-1 duration-500">
-              <p className="text-center text-green-700 font-mono text-[10px] md:text-xs uppercase tracking-[0.2em] font-black">
-                Translate and Refinement is Finished
-              </p>
+              )}
             </div>
           )}
         </div>
@@ -1622,76 +1266,6 @@ export default function App() {
                 >
                   Apply Sync
                 </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* MKV Track Selection Modal */}
-      <AnimatePresence>
-        {showMkvModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-[#141414]/90 backdrop-blur-md"
-              onClick={() => setShowMkvModal(false)}
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 30 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 30 }}
-              className="relative bg-[#E4E3E0] w-full max-w-2xl p-8 shadow-2xl border border-[#141414] overflow-hidden flex flex-col max-h-[80vh]"
-            >
-              <div className="flex items-center justify-between mb-8">
-                <div>
-                  <h3 className="font-serif italic text-3xl mb-1">Embedded Subtitles</h3>
-                  <p className="text-[10px] font-mono uppercase tracking-[0.2em] opacity-50">Select a track to extract from MKV</p>
-                </div>
-                <button 
-                  onClick={() => setShowMkvModal(false)}
-                  className="w-10 h-10 flex items-center justify-center hover:bg-[#141414]/5 rounded-full transition-colors"
-                >
-                  <X size={24} />
-                </button>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-                <div className="grid gap-3">
-                  {mkvTracks.map((track) => (
-                    <button
-                      key={track.number}
-                      onClick={() => selectMkvTrack(track)}
-                      className="group flex items-center justify-between p-6 border border-[#141414]/10 hover:border-[#141414] hover:bg-[#141414] transition-all text-left"
-                    >
-                      <div className="flex items-center gap-6">
-                        <div className="w-12 h-12 flex items-center justify-center bg-[#141414]/5 group-hover:bg-[#E4E3E0]/10 rounded-full">
-                          <FileText size={20} className="group-hover:text-[#E4E3E0]" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-3 mb-1">
-                            <span className="font-serif italic text-xl group-hover:text-[#E4E3E0]">{track.name}</span>
-                            <span className="px-2 py-0.5 bg-[#141414] text-[#E4E3E0] text-[8px] font-mono rounded uppercase">
-                              {track.language}
-                            </span>
-                          </div>
-                          <p className="text-[10px] font-mono uppercase tracking-widest opacity-40 group-hover:opacity-60 group-hover:text-[#E4E3E0]">
-                            Codec: {track.type}
-                          </p>
-                        </div>
-                      </div>
-                      <ChevronRight size={20} className="opacity-0 group-hover:opacity-100 group-hover:text-[#E4E3E0] transform translate-x-[-10px] group-hover:translate-x-0 transition-all" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-8 pt-6 border-t border-[#141414]/10">
-                <p className="text-[9px] font-mono uppercase tracking-tight opacity-40 text-center">
-                  Only text-based formats (SRT, ASS) can be extracted. PGS/SUP tracks will be ignored.
-                </p>
               </div>
             </motion.div>
           </div>
