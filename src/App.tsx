@@ -213,25 +213,51 @@ export default function App() {
         s = mirrored;
       }
       
-      // 3. Move leading punctuation to the end (The ". ! ," go to other side logic)
-      // Symbols that should NOT be at the start of a Kurdish Sorani subtitle
-      // We exclude '...' and '-' from this list because they are valid prefix markers
-      const leadingToMove = ['.', '!', '؟', '،', '؛', ':', ';', ',', '?', '!', '!!'];
+      // 3. Bidirectional Punctuation Swap (The ". ! ," toggle logic)
+      // Symbols that we want to swap from side to side
+      const symbolsToSwap = ['.', '!', '؟', '،', '؛', ':', ';', ',', '?', '!!', '؟!', '!؟'];
       
-      let found = true;
-      let iterations = 0;
-      while (found && iterations < 10) { 
-        found = false;
-        iterations++;
-        for (const symbol of leadingToMove) {
-          if (s.startsWith(symbol)) {
-            // Only move if it's not part of an ellipsis
-            if (symbol === '.' && s.startsWith('..')) continue;
-            
-            s = s.substring(symbol.length).trim() + symbol;
-            found = true;
-            break;
+      // Determine if there is leading punctuation (excluding ellipsis)
+      const hasLeading = symbolsToSwap.some(sym => s.startsWith(sym) && !(sym === '.' && s.startsWith('..')));
+      
+      if (hasLeading) {
+        // Move leading symbols to the end
+        let leadingChunk = "";
+        let found = true;
+        while (found) {
+          found = false;
+          // Sort by length to match longest patterns first (e.g., !! before !)
+          const sortedSymbols = [...symbolsToSwap].sort((a, b) => b.length - a.length);
+          for (const sym of sortedSymbols) {
+            if (s.startsWith(sym)) {
+              if (sym === '.' && s.startsWith('..')) continue;
+              leadingChunk += sym;
+              s = s.substring(sym.length).trim();
+              found = true;
+              break;
+            }
           }
+        }
+        s = s + leadingChunk;
+      } else {
+        // If no leading punctuation, check for trailing punctuation to move to the front
+        const hasTrailing = symbolsToSwap.some(sym => s.endsWith(sym));
+        if (hasTrailing) {
+          let trailingChunk = "";
+          let found = true;
+          while (found) {
+            found = false;
+            const sortedSymbols = [...symbolsToSwap].sort((a, b) => b.length - a.length);
+            for (const sym of sortedSymbols) {
+              if (s.endsWith(sym)) {
+                trailingChunk = sym + trailingChunk;
+                s = s.substring(0, s.length - sym.length).trim();
+                found = true;
+                break;
+              }
+            }
+          }
+          s = trailingChunk + s;
         }
       }
       
