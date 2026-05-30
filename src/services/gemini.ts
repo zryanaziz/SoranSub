@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
-const MODEL = "gemini-3-flash-preview";
+const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. CRITICAL: Kurdish Sorani sentences MUST NOT start with leading punctuation like commas (,), ellipses (...), periods (.), exclamation points (!), or question marks (?). These must be moved to the end of the sentence or removed from the beginning. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
+const MODEL = "gemini-1.5-flash";
 
 // Helper to extract JSON from potentially messy model output
 function extractJson(text: string): any {
@@ -89,6 +89,9 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Pr
   }
 }
 
+/**
+ * Single block translation
+ */
 export async function translateToKurdishSorani(text: string): Promise<string> {
   return withRetry(async () => {
     const ai = getAI();
@@ -101,138 +104,6 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
     });
 
     return (response.text || text).replace(/\\n/g, '\n');
-  });
-}
-
-export async function translateBatch(texts: string[]): Promise<string[]> {
-  return withRetry(async () => {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: `You are provided with a JSON array of ${texts.length} English subtitle lines.
-      Your task is to translate each line into Kurdish Sorani.
-      
-      RULES:
-      1. Return a JSON array of strings.
-      2. The output array MUST have exactly ${texts.length} elements.
-      3. Maintain the exact order of the input.
-      4. If a line is empty or just punctuation, keep it as is.
-      5. PRESERVE NEWLINES: If an input string has a line break, the translation MUST also have a line break at a natural point. Do not remove line breaks.
-      6. NO LITERAL ESCAPES: Do not return literal '\n' characters in the text. Use actual newlines in your response strings.
-      
-      INPUT: ${JSON.stringify(texts)}`,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        responseMimeType: "application/json",
-        responseSchema: BATCH_SCHEMA,
-      }
-    });
-
-    const result = extractJson(response.text || "[]");
-    if (Array.isArray(result) && result.length === texts.length) {
-      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
-    }
-    
-    console.warn(`Batch mismatch for translateBatch: expected ${texts.length}, got ${result?.length}`);
-    return texts;
-  });
-}
-
-export async function refineBatch(texts: string[]): Promise<string[]> {
-  return withRetry(async () => {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: `You are a professional Kurdish Sorani editor.
-      Your task is to refine the following ${texts.length} translated subtitle lines.
-      
-      RULES:
-      1. Fix any grammar, spelling, or unnatural phrasing while maintaining the original meaning.
-      2. Return a JSON array of strings.
-      3. The output array MUST have exactly ${texts.length} elements.
-      4. Maintain the exact order of the input.
-      5. PRESERVE NEWLINES: If an input string has a line break, keep it in the refined version. Do not merge lines unless it significantly improves readability.
-      
-      INPUT: ${JSON.stringify(texts)}`,
-      config: {
-        systemInstruction: "You are a professional Kurdish Sorani editor. Fix grammar, spelling, and phrasing.",
-        responseMimeType: "application/json",
-        responseSchema: BATCH_SCHEMA,
-      }
-    });
-
-    const result = extractJson(response.text || "[]");
-    if (Array.isArray(result) && result.length === texts.length) {
-      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
-    }
-    
-    console.warn(`Batch mismatch for refineBatch: expected ${texts.length}, got ${result?.length}`);
-    return texts;
-  });
-}
-
-export async function paraphraseBatch(texts: string[]): Promise<string[]> {
-  return withRetry(async () => {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: `You are a professional Kurdish Sorani writer.
-      Rewrite the following ${texts.length} translated subtitle lines to be more natural, idiomatic, and expressive while maintaining the original meaning.
-      
-      RULES:
-      1. Paraphrase for better flow and natural expression.
-      2. Return a JSON array of strings.
-      3. The output array MUST have exactly ${texts.length} elements.
-      4. Maintain the exact order of the input.
-      5. PRESERVE NEWLINES: Maintain any existing line breaks within a subtitle block. Do not merge multiple lines into one unless requested.
-      
-      INPUT: ${JSON.stringify(texts)}`,
-      config: {
-        systemInstruction: "You are a professional Kurdish Sorani writer. Rewrite subtitles to be more natural and idiomatic.",
-        responseMimeType: "application/json",
-        responseSchema: BATCH_SCHEMA,
-      }
-    });
-
-    const result = extractJson(response.text || "[]");
-    if (Array.isArray(result) && result.length === texts.length) {
-      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
-    }
-    
-    console.warn(`Batch mismatch for paraphraseBatch: expected ${texts.length}, got ${result?.length}`);
-    return texts;
-  });
-}
-
-export async function refineSourceBatch(texts: string[]): Promise<string[]> {
-  return withRetry(async () => {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: `You are a professional editor.
-      Your task is to refine the following ${texts.length} subtitle lines.
-      
-      RULES:
-      1. Fix any grammar, spelling, or unnatural phrasing while maintaining the original meaning and language.
-      2. Return a JSON array of strings.
-      3. The output array MUST have exactly ${texts.length} elements.
-      4. Maintain the exact order of the input.
-      
-      INPUT: ${JSON.stringify(texts)}`,
-      config: {
-        systemInstruction: "You are a professional editor. Fix grammar, spelling, and phrasing in the source language.",
-        responseMimeType: "application/json",
-        responseSchema: BATCH_SCHEMA,
-      }
-    });
-
-    const result = extractJson(response.text || "[]");
-    if (Array.isArray(result) && result.length === texts.length) {
-      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
-    }
-    
-    console.warn(`Batch mismatch for refineSourceBatch: expected ${texts.length}, got ${result?.length}`);
-    return texts;
   });
 }
 
@@ -251,11 +122,12 @@ export async function jointTranslateRefineBatch(texts: string[]): Promise<string
       CRITICAL RULES:
       1. TRANSLATE: Convert the English text into high-quality, natural Kurdish Sorani.
       2. REFINE: Ensure the Kurdish text uses perfect grammar, spelling, and idiomatic phrasing for subtitles.
-      3. OUTPUT: Return a JSON array of strings ONLY.
-      4. ORDER: Maintain the exact order of the provided English lines.
-      5. COUNT: You MUST return exactly ${texts.length} strings in the array.
-      6. NEWLINES: If an input string has a line break, the translation MUST also have a line break.
-      7. DO NOT ECHO: Do not return the English text. If a line cannot be translated, provide the best possible transliteration or professional adaptation in Sorani Kurdish.
+      3. PUNCTUATION: DO NOT start a Kurdish Sorani sentence with a comma (,), ellipses (...), period (.), exclamation point (!), or question mark (?). These leading punctuations MUST be moved to the end of the sentence. Use Kurdish-specific punctuation where appropriate (؟ instead of ?, ، instead of ,).
+      4. OUTPUT: Return a JSON array of strings ONLY.
+      5. ORDER: Maintain the exact order of the provided English lines.
+      6. COUNT: You MUST return exactly ${texts.length} strings in the array.
+      7. NEWLINES: If an input string has a line break, the translation MUST also have a line break.
+      8. DO NOT ECHO: Do not return the English text. If a line cannot be translated, provide the best possible transliteration or professional adaptation in Sorani Kurdish.
       
       INPUT ENGLISH LINES:
       ${JSON.stringify(texts)}`,
@@ -282,33 +154,5 @@ export async function jointTranslateRefineBatch(texts: string[]): Promise<string
     }
 
     throw new Error(`AI failed to return valid translation batch. (Expected ${texts.length}, got ${result?.length ?? 'invalid'}). Falling back to retry.`);
-  });
-}
-
-/**
- * Summarize the entire subtitle content.
- */
-export async function summarizeSubtitles(texts: string[], isTranslated: boolean = false): Promise<string> {
-  return withRetry(async () => {
-    const ai = getAI();
-    // Use a reasonable chunk of text for summarization to avoid token limits but get enough context
-    const combinedText = texts.slice(0, 800).join(' '); 
-    const languageName = isTranslated ? "Kurdish Sorani" : "English";
-    
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: `You are provided with the text of a movie/video's subtitles in ${languageName}.
-      Provide a comprehensive but concise summary of the content (approx. 2-4 paragraphs).
-      
-      The summary should be written in ${isTranslated ? 'Kurdish Sorani' : 'English'}.
-      
-      SUBTITLE CONTENT:
-      ${combinedText}`,
-      config: {
-        systemInstruction: `You are a professional content summarizer. Write a clear, high-quality summary in ${isTranslated ? 'Kurdish Sorani' : 'English'}.`
-      }
-    });
-
-    return (response.text || "Could not generate summary.").replace(/\\n/g, '\n');
   });
 }

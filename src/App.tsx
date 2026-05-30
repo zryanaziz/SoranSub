@@ -37,14 +37,9 @@ import { twMerge } from 'tailwind-merge';
 import { SubtitleItem } from './types';
 import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stripFormatting } from './lib/subtitle-utils';
 import { 
-  translateBatch, 
   translateToKurdishSorani, 
-  refineBatch, 
-  refineSourceBatch,
-  paraphraseBatch,
   jointTranslateRefineBatch,
   setManualApiKey,
-  summarizeSubtitles
 } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
@@ -157,22 +152,34 @@ export default function App() {
     let tagCount = 0;
     const initialCount = subtitles.length;
 
-    // Helper for character swapping
+    // Helper for character swapping - specifically for Kurdish Sorani requirements
     const swapSymbols = (str: string) => {
       if (!str) return str;
       let s = str.trim();
-      const chars = ['!', '-'];
       
-      for (const char of chars) {
-        // If it's at the start, move to end
-        if (s.startsWith(char)) {
-          s = s.substring(1).trim() + char;
-        } 
-        // If it's at the end, move to start
-        else if (s.endsWith(char)) {
-          s = char + s.substring(0, s.length - 1).trim();
+      // Symbols that should NOT be at the start of a Kurdish Sorani subtitle
+      // We move them to the end because in Sorani Kurdish punctuation follows the sentence
+      const leadingSymbols = [',', '...', '.', '!', '?', '-', '،', '؛', '؟'];
+      
+      let found = true;
+      while (found) {
+        found = false;
+        for (const symbol of leadingSymbols) {
+          if (s.startsWith(symbol)) {
+            // Special case for ellipses ... to ensure we catch it all
+            if (symbol === '...' && s.startsWith('...')) {
+              s = s.substring(3).trim() + '...';
+              found = true;
+              break;
+            } else if (s.startsWith(symbol)) {
+              s = s.substring(symbol.length).trim() + symbol;
+              found = true;
+              break;
+            }
+          }
         }
       }
+      
       return s;
     };
 
