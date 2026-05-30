@@ -15,14 +15,10 @@ import {
   CheckCircle2, 
   AlertCircle,
   Loader2,
-  Video,
   Search,
   X,
-  Play,
-  Pause,
   RotateCcw,
   RotateCw,
-  Maximize2,
   Sparkles,
   Clock,
   Type,
@@ -39,7 +35,6 @@ import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stri
 import { 
   translateToKurdishSorani, 
   jointTranslateRefineBatch,
-  setManualApiKey,
 } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
@@ -55,17 +50,8 @@ export default function App() {
   const [showFinishedMessage, setShowFinishedMessage] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
-  const [activeTab, setActiveTab] = useState<'list' | 'video'>('list');
-  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
-  const [showKeyInput, setShowKeyInput] = useState(false);
-  const [manualKey, setManualKey] = useState('');
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [videoType, setVideoType] = useState<string>('');
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
-  const [isPlaying, setIsPlaying] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
   const [rangeFrom, setRangeFrom] = useState<string>('1');
@@ -220,7 +206,6 @@ export default function App() {
   const handleGo = () => {
     switch (selectedAction) {
       case 'sync': setShowSyncModal(true); break;
-      case 'selectVideo': videoFileInputRef.current?.click(); break;
       case 'cleanUp': handleCleanUpSubtitles(); break;
       default: break;
     }
@@ -247,35 +232,6 @@ export default function App() {
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoFileInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const videoContainerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in an input or textarea
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (videoRef.current) {
-          if (isPlaying) videoRef.current.pause();
-          else videoRef.current.play();
-        }
-      } else if (e.code === 'ArrowLeft') {
-        e.preventDefault();
-        handleSkip(-5);
-      } else if (e.code === 'ArrowRight') {
-        e.preventDefault();
-        handleSkip(5);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying]);
 
   // Auto-save to localStorage
   useEffect(() => {
@@ -304,64 +260,6 @@ export default function App() {
       }
     }
   }, []);
-
-  useEffect(() => {
-    const checkApiKey = async () => {
-      // 1. Check for manual key in localStorage
-      const storedKey = localStorage.getItem('gemini_api_key');
-      if (storedKey) {
-        setHasApiKey(true);
-        return;
-      }
-
-      // 2. Check for environment variables
-      const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && process.env?.API_KEY);
-      if (envKey) {
-        setHasApiKey(true);
-        return;
-      }
-
-      // 3. Check AI Studio platform key
-      if (window.aistudio?.hasSelectedApiKey) {
-        try {
-          const hasKey = await window.aistudio.hasSelectedApiKey();
-          setHasApiKey(hasKey);
-        } catch (e) {
-          console.error("Error checking platform API key:", e);
-          setHasApiKey(false);
-        }
-      } else {
-        setHasApiKey(false);
-      }
-    };
-    checkApiKey();
-    
-    // Periodically check if key was selected via platform
-    const interval = setInterval(checkApiKey, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleClearKey = () => {
-    setManualApiKey('');
-    setHasApiKey(false);
-    setStatus({ type: 'info', message: 'API Key cleared.' });
-  };
-
-  const handleSaveManualKey = () => {
-    if (manualKey.trim()) {
-      setManualApiKey(manualKey.trim());
-      setHasApiKey(true);
-      setShowKeyInput(false);
-      setStatus({ type: 'success', message: 'API Key saved successfully!' });
-    }
-  };
-
-  const handleOpenKeySelector = async () => {
-    if (window.aistudio?.openSelectKey) {
-      await window.aistudio.openSelectKey();
-      setHasApiKey(true);
-    }
-  };
 
   useEffect(() => {
     const checkMobile = () => {
@@ -423,84 +321,9 @@ export default function App() {
           }
         };
         reader.readAsText(file);
-      } else if (file.type.startsWith('video/') || ['mp4', 'webm', 'ogg', 'mkv'].includes(ext || '')) {
-        const url = URL.createObjectURL(file);
-        setVideoUrl(url);
-        setVideoType(file.type || `video/${ext}`);
-        
-        if (ext === 'mkv') {
-          setStatus({ 
-            type: 'info', 
-            message: 'MKV files have limited browser support. If you hear sound but see no image, please convert to MP4 (H.264).' 
-          });
-        } else {
-          setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
-        }
-        
-        if (isMobileView) setActiveTab('video');
       }
     }
-  }, [isMobileView]);
-
-  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const ext = file.name.toLowerCase().split('.').pop();
-      const url = URL.createObjectURL(file);
-      setVideoUrl(url);
-      setVideoType(file.type || `video/${ext}`);
-      
-      if (ext === 'mkv') {
-        setStatus({ 
-          type: 'info', 
-          message: 'MKV files have limited browser support. If you hear sound but see no image, please convert to MP4 (H.264).' 
-        });
-      } else {
-        setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
-      }
-      
-      if (isMobileView) setActiveTab('video');
-    }
-  };
-
-  const jumpToTime = (seconds: number) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = seconds;
-      // videoRef.current.play();
-      setIsPlaying(false);
-    }
-  };
-
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      const time = videoRef.current.currentTime;
-      setCurrentTime(time);
-      
-      if (videoRef.current.duration && duration !== videoRef.current.duration) {
-        setDuration(videoRef.current.duration);
-      }
-      
-      // Auto-select subtitle based on time
-      const activeIdx = subtitles.findIndex(s => time >= s.startTimeSeconds && time <= s.endTimeSeconds);
-      if (activeIdx !== -1 && activeIdx !== selectedIndex) {
-        setSelectedIndex(activeIdx);
-      }
-    }
-  };
-
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(e.target.value);
-    if (videoRef.current) {
-      videoRef.current.currentTime = time;
-      setCurrentTime(time);
-    }
-  };
-
-  const handleSkip = (seconds: number) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime += seconds;
-    }
-  };
+  }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
     onDrop, 
@@ -508,7 +331,6 @@ export default function App() {
       'text/plain': ['.srt', '.vtt', '.sub', '.ass'],
       'application/x-subrip': ['.srt'],
       'text/vtt': ['.vtt'],
-      'video/*': ['.mp4', '.webm', '.ogg', '.mkv'],
       'application/octet-stream': ['.sup']
     },
     multiple: false 
@@ -528,12 +350,6 @@ export default function App() {
   const handleProcessSubtitles = async (indices: number[], shouldRefine: boolean = true) => {
     if (subtitles.length === 0 || indices.length === 0) return;
     
-    if (!hasApiKey) {
-      setShowKeyInput(true);
-      setStatus({ type: 'error', message: 'Please set an API key first.' });
-      return;
-    }
-
     setIsTranslating(true);
     setProgress(5);
     setShowFinishedMessage(false);
@@ -704,17 +520,6 @@ export default function App() {
     }
   };
 
-  const toggleFullScreen = () => {
-    if (!videoContainerRef.current) return;
-    if (!document.fullscreenElement) {
-      videoContainerRef.current.requestFullscreen().catch(err => {
-        console.error(`Error attempting to enable full-screen mode: ${err.message}`);
-      });
-    } else {
-      document.exitFullscreen();
-    }
-  };
-
   const filteredSubtitles = React.useMemo(() => {
     if (!searchQuery.trim()) return subtitles;
 
@@ -759,15 +564,10 @@ export default function App() {
     });
   }, [subtitles, searchQuery]);
 
-  const currentSubtitle = subtitles.find(s => currentTime >= s.startTimeSeconds && currentTime <= s.endTimeSeconds);
-  const selectedItem = selectedIndex !== null ? subtitles[selectedIndex] : null;
   const translatedCount = subtitles.filter(s => s.translatedText).length;
 
   const handleSelectItem = (idx: number) => {
     setSelectedIndex(idx);
-    if (isMobileView) {
-      setActiveTab('editor');
-    }
   };
 
   return (
@@ -817,31 +617,6 @@ export default function App() {
           </div>
 
           <div className="flex flex-col items-end md:hidden">
-            <div className="flex flex-col items-end gap-1 mb-2">
-              {!hasApiKey ? (
-                <>
-                  <button 
-                    onClick={handleOpenKeySelector}
-                    className="px-2 py-1 bg-red-500 text-white text-[8px] uppercase font-mono rounded-sm animate-pulse"
-                  >
-                    Select Key
-                  </button>
-                  <button 
-                    onClick={() => setShowKeyInput(true)}
-                    className="px-2 py-1 border border-red-500 text-red-500 text-[8px] uppercase font-mono rounded-sm"
-                  >
-                    Enter Key
-                  </button>
-                </>
-              ) : (
-                <button 
-                  onClick={() => setShowKeyInput(true)}
-                  className="px-2 py-1 border border-[#141414] text-[#141414] text-[8px] uppercase font-mono rounded-sm opacity-50 hover:opacity-100"
-                >
-                  Change Key
-                </button>
-              )}
-            </div>
             <div className="text-[10px] font-mono uppercase opacity-70 flex items-center gap-2">
               {translatedCount}/{subtitles.length} Blocks
               {subtitles.length > 0 && (
@@ -853,57 +628,12 @@ export default function App() {
                 </button>
               )}
             </div>
-            {(subtitles.length > 0 || videoUrl) && (
-              <div className="flex border border-[#141414] rounded-sm overflow-hidden mt-1">
-                <button 
-                  onClick={() => setActiveTab('list')}
-                  className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors", activeTab === 'list' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5")}
-                >
-                  List
-                </button>
-                {videoUrl && (
-                  <button 
-                    onClick={() => setActiveTab('video')}
-                    className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors", activeTab === 'video' ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5")}
-                  >
-                    Video
-                  </button>
-                )}
-              </div>
-            )}
           </div>
         </div>
 
 
 
         <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
-          <div className="flex gap-2">
-            {!hasApiKey ? (
-              <>
-                <button 
-                  onClick={handleOpenKeySelector}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-red-500 text-white text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-600 transition-colors animate-pulse"
-                >
-                  <AlertCircle size={12} />
-                  Select Key
-                </button>
-                <button 
-                  onClick={() => setShowKeyInput(true)}
-                  className="flex items-center gap-2 px-3 py-1.5 border border-red-500 text-red-500 text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-50 transition-colors"
-                >
-                  Enter Key
-                </button>
-              </>
-            ) : (
-              <button 
-                onClick={() => setShowKeyInput(true)}
-                className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] text-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-50 hover:opacity-100"
-                title="API Key Settings"
-              >
-                <Sparkles size={14} />
-              </button>
-            )}
-          </div>
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -915,14 +645,6 @@ export default function App() {
               }
             }}
           />
-          <input 
-            type="file" 
-            ref={videoFileInputRef} 
-            className="hidden" 
-            accept="video/*" 
-            onChange={handleVideoUpload}
-          />
-
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
           <button 
@@ -985,14 +707,6 @@ export default function App() {
           </button>
 
           <button 
-            onClick={() => videoFileInputRef.current?.click()}
-            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
-            title="Select Video File"
-          >
-            <Video size={14} />
-          </button>
-
-          <button 
             onClick={() => {
               setRangeTo(subtitles.length.toString());
               setShowRangeModal(true);
@@ -1020,10 +734,8 @@ export default function App() {
       {/* Main Layout */}
       <main className="flex flex-1 overflow-hidden relative">
         {/* Left Pane: Subtitle List */}
-        <div className={cn(
-          "border-r border-[#141414] flex flex-col transition-all duration-300",
-          activeTab === 'list' ? (isMobileView ? "w-full" : "w-1/2") : "w-0 opacity-0 pointer-events-none"
-        )}>
+        {/* Subtitle List */}
+        <div className="flex-1 flex flex-col transition-all duration-300">
           {subtitles.length === 0 ? (
             <div 
               {...getRootProps()} 
@@ -1034,7 +746,7 @@ export default function App() {
             >
               <input {...getInputProps()} />
               <Upload size={40} className="mb-4 opacity-20 md:size-12" />
-              <h2 className="font-serif italic text-xl md:text-2xl mb-2 text-center">Drop Subtitles or Video here</h2>
+              <h2 className="font-serif italic text-xl md:text-2xl mb-2 text-center">Drop Subtitles here</h2>
               <p className="text-[10px] md:text-xs font-mono opacity-50 uppercase tracking-widest text-center">Supports SRT, VTT, SUB (MicroDVD)</p>
             </div>
           ) : (
@@ -1099,7 +811,6 @@ export default function App() {
                 {filteredSubtitles.map((item) => {
                   const idx = subtitles.findIndex(s => s.id === item.id);
                   const isActive = selectedIndex === idx;
-                  const isCurrentlyPlaying = currentTime >= item.startTimeSeconds && currentTime <= item.endTimeSeconds;
 
                   return (
                     <div 
@@ -1107,13 +818,9 @@ export default function App() {
                       id={`sub-${idx}`}
                       className={cn(
                         "grid grid-cols-[40px_1fr_1fr] border-b border-[#141414] transition-colors group relative",
-                        isActive ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:bg-opacity-5",
-                        isCurrentlyPlaying && !isActive && "bg-orange-500 bg-opacity-10"
+                        isActive ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:bg-opacity-5"
                       )}
                     >
-                      {isCurrentlyPlaying && (
-                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-orange-500" />
-                      )}
                       <div 
                         onClick={() => handleSelectItem(idx)}
                         className={cn(
@@ -1158,159 +865,6 @@ export default function App() {
             </div>
           )}
         </div>
-
-        <div className={cn(
-          "bg-[#F0EFED] flex flex-col relative transition-all duration-300",
-          activeTab === 'list' && !isMobileView ? "w-1/2" : (activeTab === 'video' ? "w-full" : "hidden")
-        )}>
-          {/* Video Preview Section */}
-          <div 
-            ref={videoContainerRef}
-            className={cn(
-              "bg-black relative group transition-all duration-300 flex flex-col items-center justify-center overflow-hidden min-h-[300px] md:min-h-[400px]",
-              activeTab === 'video' ? "flex-1" : "aspect-video border-b border-[#141414]"
-            )}
-          >
-            {videoUrl ? (
-              <>
-                <video 
-                  key={videoUrl}
-                  ref={videoRef}
-                  className="w-full h-full object-contain"
-                  onTimeUpdate={handleTimeUpdate}
-                  onPlay={() => setIsPlaying(true)}
-                  onPause={() => setIsPlaying(false)}
-                  onClick={() => isPlaying ? videoRef.current?.pause() : videoRef.current?.play()}
-                  onError={(e) => {
-                    console.error("Video error:", e);
-                    setStatus({ 
-                      type: 'error', 
-                      message: 'Video playback failed. This is usually due to an unsupported codec (like H.265/HEVC). Try converting to H.264 MP4.' 
-                    });
-                  }}
-                  playsInline
-                  crossOrigin="anonymous"
-                >
-                  <source src={videoUrl} type={videoType} />
-                </video>
-                
-                {/* Codec Warning Overlay (Only if sound but no image is common) */}
-                {videoType.includes('mkv') && isPlaying && (
-                  <div className="absolute top-4 left-4 right-4 bg-yellow-500/90 text-black text-[10px] p-2 rounded-sm font-mono uppercase tracking-widest z-50 animate-pulse pointer-events-none">
-                    Warning: MKV detected. If you see no image, convert to MP4.
-                  </div>
-                )}
-                
-                {/* Top Overlay: Original Text */}
-                <div className="absolute top-10 left-0 right-0 flex flex-col items-center pointer-events-none px-4 text-center">
-                  {currentSubtitle && (
-                    <div className="bg-black bg-opacity-60 px-4 py-2 rounded-sm max-w-[80%]">
-                      <p className="text-white text-sm md:text-base font-sans">{currentSubtitle.text}</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Bottom Overlay: Translated Text (Editable) */}
-                <div className="absolute bottom-16 left-0 right-0 flex flex-col items-center px-4 text-center">
-                  {currentSubtitle && (
-                    <div className="bg-black bg-opacity-70 px-4 py-2 rounded-sm max-w-[80%] border border-yellow-500/30">
-                      <textarea
-                        value={currentSubtitle.translatedText || ''}
-                        onChange={(e) => handleUpdateText(currentSubtitle.id, e.target.value, true)}
-                        placeholder="Type translation here..."
-                        className="bg-transparent text-yellow-400 text-[22px] font-bold font-sans w-full border-none focus:outline-none resize-none text-center min-w-[200px]"
-                        dir="auto"
-                        rows={2}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Custom Controls Overlay */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-4 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-3">
-                  {/* Seekbar */}
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-mono text-white w-12 text-right">{formatTime(currentTime).split(',')[0]}</span>
-                    <input 
-                      type="range"
-                      min={0}
-                      max={duration || 0}
-                      step={0.1}
-                      value={currentTime}
-                      onChange={handleSeek}
-                      className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-yellow-500"
-                    />
-                    <span className="text-[10px] font-mono text-white w-12">{formatTime(duration || 0).split(',')[0]}</span>
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-6">
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleSkip(-5); }}
-                        className="text-white hover:text-yellow-400 transition-colors"
-                        title="Back 5s"
-                      >
-                        <RotateCcw size={20} />
-                      </button>
-                      
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); isPlaying ? videoRef.current?.pause() : videoRef.current?.play(); }}
-                        className="text-white hover:text-yellow-400 transition-colors"
-                      >
-                        {isPlaying ? <Pause size={24} /> : <Play size={24} />}
-                      </button>
-
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleSkip(5); }}
-                        className="text-white hover:text-yellow-400 transition-colors"
-                        title="Forward 5s"
-                      >
-                        <RotateCw size={20} />
-                      </button>
-                    </div>
-
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); toggleFullScreen(); }}
-                      className="text-white hover:text-yellow-400 transition-colors"
-                      title="Toggle Fullscreen"
-                    >
-                      <Maximize2 size={20} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                  <div className="bg-black bg-opacity-50 p-6 rounded-full pointer-events-auto cursor-pointer" onClick={(e) => {
-                    e.stopPropagation();
-                    isPlaying ? videoRef.current?.pause() : videoRef.current?.play();
-                  }}>
-                    {isPlaying ? <Pause size={48} className="text-white" /> : <Play size={48} className="text-white" />}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center text-[#E4E3E0] opacity-30 p-8 text-center">
-                <Video size={48} className="mb-4" />
-                <p className="text-xs font-mono uppercase tracking-widest">No video loaded</p>
-                <p className="text-[8px] mt-2 max-w-xs font-mono uppercase tracking-tighter">Use H.264 MP4 for best compatibility. MKV/H.265 may play sound only.</p>
-                <button 
-                  onClick={() => videoFileInputRef.current?.click()}
-                  className="mt-4 px-4 py-2 border border-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#E4E3E0] hover:text-black transition-colors"
-                >
-                  Upload Video
-                </button>
-              </div>
-            )}
-          </div>
-
-          {showFinishedMessage && (
-            <div className="p-4 bg-green-500/10 border-b border-[#141414] animate-in fade-in slide-in-from-top-1 duration-500">
-              <p className="text-center text-green-700 font-mono text-[10px] md:text-xs uppercase tracking-[0.2em] font-black">
-                Translate and Refinement is Finished
-              </p>
-            </div>
-          )}
-        </div>
       </main>
 
       {/* Status Bar */}
@@ -1345,46 +899,6 @@ export default function App() {
           <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-green-500 animate-pulse" />
         </div>
       </footer>
-
-      {/* API Key Input Modal */}
-      <AnimatePresence>
-        {showKeyInput && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#141414] bg-opacity-80 p-4 backdrop-blur-sm">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-[#E4E3E0] border border-[#141414] p-6 max-w-md w-full shadow-2xl"
-            >
-              <h3 className="text-lg font-serif italic mb-4">Enter Gemini API Key</h3>
-              <p className="text-xs opacity-70 mb-4 font-mono leading-relaxed">
-                Enter your Gemini API key manually. It will be stored locally in your browser.
-              </p>
-              <input 
-                type="password"
-                value={manualKey}
-                onChange={(e) => setManualKey(e.target.value)}
-                placeholder="AIzaSy..."
-                className="w-full bg-transparent border border-[#141414] p-2 text-xs font-mono mb-6 focus:outline-none focus:ring-1 focus:ring-[#141414]"
-              />
-              <div className="flex justify-end gap-3">
-                <button 
-                  onClick={() => setShowKeyInput(false)}
-                  className="px-4 py-2 text-[10px] uppercase tracking-widest font-mono opacity-50 hover:opacity-100"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleSaveManualKey}
-                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest font-mono hover:bg-opacity-90"
-                >
-                  Save Key
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* Range Selection Modal */}
       <AnimatePresence>
