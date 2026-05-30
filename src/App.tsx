@@ -936,7 +936,7 @@ export default function App() {
         </AnimatePresence>
 
         <div className="flex items-center gap-2 md:gap-4">
-          <span className="hidden xs:inline">Gemini 1.5 Pro {manualKey && "(Custom Key)"}</span>
+          <span className="hidden xs:inline">Gemini 1.5 Flash {manualKey && "(Custom Key)"}</span>
           <div className={cn(
             "w-1.5 h-1.5 md:w-2 md:h-2 rounded-full animate-pulse",
             manualKey ? "bg-blue-500" : "bg-green-500"
