@@ -1,13 +1,18 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. CRITICAL: Kurdish Sorani sentences MUST NOT start with leading punctuation like commas (,), ellipses (...), periods (.), exclamation points (!), or question marks (?). These must be moved to the end of the sentence or removed from the beginning. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
-const MODEL = "gemini-1.5-flash";
+const MODEL = "gemini-2.0-flash";
 
 // Helper to extract JSON from potentially messy model output
 function extractJson(text: string): any {
   try {
     // Try direct parse first
-    return JSON.parse(text);
+    const trimmed = text.trim();
+    if (trimmed.startsWith('```json')) {
+      const content = trimmed.substring(7, trimmed.length - 3);
+      return JSON.parse(content);
+    }
+    return JSON.parse(trimmed);
   } catch (e) {
     // Try to find JSON array or object using regex
     const match = text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
@@ -97,7 +102,7 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL,
-      contents: text,
+      contents: [{ role: "user", parts: [{ text }] }],
       config: {
         systemInstruction: SYSTEM_INSTRUCTION
       }
@@ -114,9 +119,7 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
 export async function jointTranslateRefineBatch(texts: string[]): Promise<string[]> {
   return withRetry(async () => {
     const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: `You are a professional subtitle translator and editor specializing in Kurdish (Sorani).
+    const prompt = `You are a professional subtitle translator and editor specializing in Kurdish (Sorani).
       Your task is to TRANSLATE and REFINE the following ${texts.length} English subtitle lines.
       
       CRITICAL RULES:
@@ -130,7 +133,11 @@ export async function jointTranslateRefineBatch(texts: string[]): Promise<string
       8. DO NOT ECHO: Do not return the English text. If a line cannot be translated, provide the best possible transliteration or professional adaptation in Sorani Kurdish.
       
       INPUT ENGLISH LINES:
-      ${JSON.stringify(texts)}`,
+      ${JSON.stringify(texts)}`;
+
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         systemInstruction: "You are a professional Kurdish Sorani translator and editor. You translate English subtitles into natural, refined Kurdish Sorani. You always return the exact same number of lines as provided.",
         responseMimeType: "application/json",

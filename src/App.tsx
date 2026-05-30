@@ -60,6 +60,34 @@ export default function App() {
   const [rangeTo, setRangeTo] = useState<string>('');
   const [syncOffset, setSyncOffset] = useState('0');
   const [selectedAction, setSelectedAction] = useState<string>('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Auto-save to workspace (for GitHub Sync)
+  useEffect(() => {
+    if (subtitles.length === 0 || !fileName) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        setIsSaving(true);
+        const content = stringifySRT(subtitles, true); // Save the translation
+        const response = await fetch('/api/save-subtitles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName, content })
+        });
+        
+        if (response.ok) {
+          setStatus({ type: 'success', message: `Synced ${fileName} to workspace.` });
+        }
+      } catch (error) {
+        console.error("Failed to sync to workspace:", error);
+      } finally {
+        setIsSaving(false);
+      }
+    }, 2000); // 2 second debounce
+
+    return () => clearTimeout(timer);
+  }, [subtitles, fileName]);
 
   const handleReplaceNext = () => {
     if (!searchQuery.trim()) return;
@@ -841,10 +869,13 @@ export default function App() {
           <button 
             onClick={() => handleDownload(true)}
             disabled={subtitles.length === 0}
-            className="flex items-center justify-center p-1.5 md:p-2 bg-[#141414] text-[#E4E3E0] hover:opacity-90 disabled:opacity-30 transition-all rounded-sm"
-            title="Save Subtitles"
+            className={cn(
+              "flex items-center justify-center p-1.5 md:p-2 bg-[#141414] text-[#E4E3E0] hover:opacity-90 disabled:opacity-30 transition-all rounded-sm",
+              isSaving && "opacity-50"
+            )}
+            title={isSaving ? "Syncing to workspace..." : "Save/Download Subtitles"}
           >
-            <Download size={14} />
+            {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
           </button>
         </div>
       </header>
