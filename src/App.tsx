@@ -72,7 +72,8 @@ export default function App() {
         const content = stringifySRT(subtitles, true); // Save the translation
         
         // Force .srt extension and append .ku for translation clarity
-        let syncName = fileName;
+        // Also strip _TrackXX patterns as requested
+        let syncName = fileName.replace(/_Track\d+/gi, '');
         if (syncName.includes('.')) {
           syncName = syncName.substring(0, syncName.lastIndexOf('.')) + '.ku.srt';
         } else {
@@ -616,7 +617,7 @@ export default function App() {
     const a = document.createElement('a');
     a.href = url;
     
-    let downloadName = fileName || (useTranslation ? 'translated.srt' : 'original.srt');
+    let downloadName = (fileName || (useTranslation ? 'translated.srt' : 'original.srt')).replace(/_Track\d+/gi, '');
     
     // Inject .ku and ensure .srt extension
     if (useTranslation) {
