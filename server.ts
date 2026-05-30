@@ -19,6 +19,11 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", model: MODEL });
+  });
+
   const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || "",
     httpOptions: {
