@@ -213,12 +213,12 @@ export default function App() {
         s = mirrored;
       }
       
-      // 3. Bidirectional Punctuation Swap (The ". ! ," toggle logic)
-      // Symbols that we want to swap from side to side
-      const symbolsToSwap = ['.', '!', '؟', '،', '؛', ':', ';', ',', '?', '!!', '؟!', '!؟'];
+      // 3. Bidirectional Punctuation Swap (The robust toggle logic)
+      // Symbols we want to swap from side to side
+      const symbolsToSwap = ['!', '؟', '،', '؛', ':', ';', ',', '?', '.', '!!', '؟!', '!؟', '...', '..'];
       
-      // Determine if there is leading punctuation (excluding ellipsis)
-      const hasLeading = symbolsToSwap.some(sym => s.startsWith(sym) && !(sym === '.' && s.startsWith('..')));
+      // Determine if there is leading punctuation (excluding dialogue dashes)
+      const hasLeading = symbolsToSwap.some(sym => s.startsWith(sym));
       
       if (hasLeading) {
         // Move leading symbols to the end
@@ -226,11 +226,10 @@ export default function App() {
         let found = true;
         while (found) {
           found = false;
-          // Sort by length to match longest patterns first (e.g., !! before !)
+          // Sort symbols by length to catch longest matches first (e.g., ... before .)
           const sortedSymbols = [...symbolsToSwap].sort((a, b) => b.length - a.length);
           for (const sym of sortedSymbols) {
             if (s.startsWith(sym)) {
-              if (sym === '.' && s.startsWith('..')) continue;
               leadingChunk += sym;
               s = s.substring(sym.length).trim();
               found = true;
