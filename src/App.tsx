@@ -17,8 +17,6 @@ import {
   Loader2,
   Search,
   X,
-  RotateCcw,
-  RotateCw,
   Sparkles,
   Clock,
   Type,
@@ -34,7 +32,7 @@ import { SubtitleItem } from './types';
 import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stripFormatting } from './lib/subtitle-utils';
 import { 
   translateToKurdishSorani, 
-  jointTranslateRefineBatch,
+  jointTranslateRefineBatch
 } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
@@ -138,34 +136,22 @@ export default function App() {
     let tagCount = 0;
     const initialCount = subtitles.length;
 
-    // Helper for character swapping - specifically for Kurdish Sorani requirements
+    // Helper for character swapping
     const swapSymbols = (str: string) => {
       if (!str) return str;
       let s = str.trim();
+      const chars = ['!', '?', '-', '،', '...'];
       
-      // Symbols that should NOT be at the start of a Kurdish Sorani subtitle
-      // We move them to the end because in Sorani Kurdish punctuation follows the sentence
-      const leadingSymbols = [',', '...', '.', '!', '?', '-', '،', '؛', '؟'];
-      
-      let found = true;
-      while (found) {
-        found = false;
-        for (const symbol of leadingSymbols) {
-          if (s.startsWith(symbol)) {
-            // Special case for ellipses ... to ensure we catch it all
-            if (symbol === '...' && s.startsWith('...')) {
-              s = s.substring(3).trim() + '...';
-              found = true;
-              break;
-            } else if (s.startsWith(symbol)) {
-              s = s.substring(symbol.length).trim() + symbol;
-              found = true;
-              break;
-            }
-          }
+      for (const char of chars) {
+        // If it's at the start, move to end
+        if (s.startsWith(char)) {
+          s = s.substring(char.length).trim() + char;
+        } 
+        // If it's at the end, move to start
+        else if (s.endsWith(char)) {
+          s = char + s.substring(0, s.length - char.length).trim();
         }
       }
-      
       return s;
     };
 
@@ -306,7 +292,7 @@ export default function App() {
         return;
       }
 
-      if (['srt', 'vtt', 'sub', 'ass'].includes(ext || '')) {
+      if (ext === 'srt' || ext === 'vtt' || ext === 'sub' || ext === 'ass') {
         setFileName(file.name);
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -472,26 +458,14 @@ export default function App() {
     
     let downloadName = fileName || (useTranslation ? 'translated_subtitles.srt' : 'original_subtitles.srt');
     
-    // Always ensure the extension is .srt
+    // Always ensure .srt extension
     if (downloadName.includes('.')) {
       const parts = downloadName.split('.');
-      parts.pop(); // Remove original extension
-      
-      // Remove existing language tags if present (e.g., .en, .EN, .fr)
-      if (parts.length > 0) {
-        const lastBasePart = parts[parts.length - 1];
-        if (/^[a-z]{2,3}(-[a-z]{2,4})?$/i.test(lastBasePart)) {
-          parts.pop();
-        }
-      }
-      
+      parts.pop();
       downloadName = parts.join('.') + '.srt';
     } else {
       downloadName += '.srt';
     }
-    
-    // Add .ku before the finally fixed .srt extension
-    downloadName = downloadName.replace(/\.srt$/, '.ku.srt');
     
     a.download = downloadName;
     document.body.appendChild(a);
@@ -501,13 +475,11 @@ export default function App() {
   };
 
   const handleCloseSubtitle = () => {
-    if (window.confirm('Are you sure you want to close the current subtitle file? Any unsaved changes will be lost.')) {
-      setSubtitles([]);
-      setFileName('');
-      setSelectedIndex(null);
-      localStorage.removeItem('soransub_current_session');
-      setStatus({ type: 'info', message: 'Subtitle file closed.' });
-    }
+    setSubtitles([]);
+    setFileName('');
+    setSelectedIndex(null);
+    localStorage.removeItem('soransub_current_session');
+    setStatus({ type: 'info', message: 'Subtitle file closed.' });
   };
 
   const handleSyncSubtitles = () => {
@@ -564,6 +536,7 @@ export default function App() {
     });
   }, [subtitles, searchQuery]);
 
+  const selectedItem = selectedIndex !== null ? subtitles[selectedIndex] : null;
   const translatedCount = subtitles.filter(s => s.translatedText).length;
 
   const handleSelectItem = (idx: number) => {
@@ -617,6 +590,11 @@ export default function App() {
           </div>
 
           <div className="flex flex-col items-end md:hidden">
+            <div className="flex flex-col items-end gap-1 mb-2">
+              <span className="text-[10px] font-mono text-green-600 flex items-center gap-1">
+                <Sparkles size={10} /> AI Connected
+              </span>
+            </div>
             <div className="text-[10px] font-mono uppercase opacity-70 flex items-center gap-2">
               {translatedCount}/{subtitles.length} Blocks
               {subtitles.length > 0 && (
@@ -628,12 +606,25 @@ export default function App() {
                 </button>
               )}
             </div>
+            {(subtitles.length > 0) && (
+              <div className="flex border border-[#141414] rounded-sm overflow-hidden mt-1">
+                <button 
+                  onClick={() => {}}
+                  className={cn("px-3 py-1 text-[10px] uppercase font-mono transition-colors bg-[#141414] text-[#E4E3E0]")}
+                >
+                  List
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
 
 
         <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
+          <div className="flex gap-2">
+            
+          </div>
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -645,6 +636,7 @@ export default function App() {
               }
             }}
           />
+
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
           <button 
@@ -733,7 +725,6 @@ export default function App() {
 
       {/* Main Layout */}
       <main className="flex flex-1 overflow-hidden relative">
-        {/* Left Pane: Subtitle List */}
         {/* Subtitle List */}
         <div className="flex-1 flex flex-col transition-all duration-300">
           {subtitles.length === 0 ? (
@@ -845,16 +836,17 @@ export default function App() {
                           rows={2}
                         />
                       </div>
-                      <div className="p-1 italic font-serif" dir="auto">
+                      <div className="p-1 italic font-serif" dir="rtl">
                         <textarea 
                           value={item.translatedText || ''}
                           onChange={(e) => handleUpdateText(item.id, e.target.value, true)}
                           onFocus={() => handleSelectItem(idx)}
                           placeholder="Type translation..."
                           className={cn(
-                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed",
+                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed text-right",
                             isActive ? "text-white placeholder:text-white/30" : "text-[#141414] placeholder:text-black/30"
                           )}
+                          dir="rtl"
                           rows={2}
                         />
                       </div>

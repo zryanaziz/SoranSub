@@ -1,7 +1,18 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { translateText, translateBatch } from "./server/gemini.ts";
+import { GoogleGenAI, Type } from "@google/genai";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
+const MODEL = "gemini-3.5-flash";
+
+const BATCH_SCHEMA = {
+  type: Type.ARRAY,
+  items: { type: Type.STRING },
+};
 
 async function startServer() {
   const app = express();
@@ -9,13 +20,32 @@ async function startServer() {
 
   app.use(express.json());
 
+  const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
+    }
+  });
+
   // API Routes
   app.post("/api/translate", async (req, res) => {
     try {
       const { text } = req.body;
-      if (!text) return res.status(400).json({ error: "Text is required" });
-      const translation = await translateText(text);
-      res.json({ translation });
+      if (!text) {
+        return res.status(400).json({ error: "Text is required" });
+      }
+
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents: text,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION
+        }
+      });
+
+      res.json({ translation: (response.text || text).replace(/\\n/g, '\n') });
     } catch (error: any) {
       console.error("Translation error:", error);
       res.status(500).json({ error: error.message });
@@ -25,9 +55,42 @@ async function startServer() {
   app.post("/api/translate-batch", async (req, res) => {
     try {
       const { texts } = req.body;
-      if (!texts || !Array.isArray(texts)) return res.status(400).json({ error: "Texts array is required" });
-      const translations = await translateBatch(texts);
-      res.json({ translations });
+      if (!texts || !Array.isArray(texts)) {
+        return res.status(400).json({ error: "Texts array is required" });
+      }
+
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents: `You are a professional subtitle translator and editor specializing in Kurdish (Sorani).
+        Your task is to TRANSLATE and REFINE the following ${texts.length} English subtitle lines.
+        
+        CRITICAL RULES:
+        1. TRANSLATE: Convert the English text into high-quality, natural Kurdish Sorani.
+        2. REFINE: Ensure the Kurdish text uses perfect grammar, spelling, and idiomatic phrasing for subtitles.
+        3. OUTPUT: Return a JSON array of strings ONLY.
+        4. ORDER: Maintain the exact order of the provided English lines.
+        5. COUNT: You MUST return exactly ${texts.length} strings in the array.
+        6. NEWLINES: If an input string has a line break, the translation MUST also have a line break.
+        7. DO NOT ECHO: Do not return the English text. If a line cannot be translated, provide the best possible transliteration or professional adaptation in Sorani Kurdish.
+        
+        INPUT ENGLISH LINES:
+        ${JSON.stringify(texts)}`,
+        config: {
+          systemInstruction: "You are a professional Kurdish Sorani translator and editor. You translate English subtitles into natural, refined Kurdish Sorani. You always return the exact same number of lines as provided.",
+          responseMimeType: "application/json",
+          responseSchema: BATCH_SCHEMA,
+        }
+      });
+
+      let result;
+      try {
+        result = JSON.parse(response.text || "[]");
+      } catch (e) {
+        const match = (response.text || "").match(/\[[\s\S]*\]/);
+        result = match ? JSON.parse(match[0]) : [];
+      }
+
+      res.json({ translations: result });
     } catch (error: any) {
       console.error("Batch translation error:", error);
       res.status(500).json({ error: error.message });
@@ -42,10 +105,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
