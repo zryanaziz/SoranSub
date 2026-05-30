@@ -41,6 +41,7 @@ import {
   jointTranslateRefineBatch,
   setManualApiKey,
 } from './services/gemini';
+import { SubtitleParser } from 'matroska-subtitles';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -72,6 +73,9 @@ export default function App() {
   const [rangeTo, setRangeTo] = useState<string>('');
   const [syncOffset, setSyncOffset] = useState('0');
   const [selectedAction, setSelectedAction] = useState<string>('');
+  const [mkvTracks, setMkvTracks] = useState<{ number: number; type: string; language: string; name: string; content?: string }[]>([]);
+  const [showMkvModal, setShowMkvModal] = useState(false);
+  const [mkvFile, setMkvFile] = useState<File | null>(null);
 
   const handleReplaceNext = () => {
     if (!searchQuery.trim()) return;
@@ -140,6 +144,96 @@ export default function App() {
       setStatus({ type: 'success', message: `Replaced ${count} occurrences.` });
     } else {
       setStatus({ type: 'info', message: 'No matches found to replace.' });
+    }
+  };
+
+  const handleMkvUpload = async (file: File) => {
+    setMkvFile(file);
+    setStatus({ type: 'info', message: 'Scanning MKV for subtitle tracks...' });
+    
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const buffer = e.target?.result as ArrayBuffer;
+        const demuxer = new SubtitleParser();
+        const detectedTracks: any[] = [];
+        const subtitleData: Record<number, string[]> = {};
+
+        demuxer.on('tracks', (tracks: any[]) => {
+          tracks.forEach(track => {
+            detectedTracks.push({
+              number: track.number,
+              type: track.type,
+              language: track.language || 'und',
+              name: track.name || `Track ${track.number}`
+            });
+          });
+        });
+
+        demuxer.on('subtitle', (subtitle: any, trackNumber: number) => {
+          const { text, time, duration } = subtitle;
+          const start = time / 1000;
+          const end = (time + duration) / 1000;
+          
+          // Construct a valid SRT block
+          const index = (subtitleData[trackNumber]?.length || 0) + 1;
+          const srtLine = `${index}\n${formatTime(start)} --> ${formatTime(end)}\n${text}\n\n`;
+          
+          if (subtitleData[trackNumber]) {
+            subtitleData[trackNumber].push(srtLine);
+          } else {
+            subtitleData[trackNumber] = [srtLine];
+          }
+        });
+
+        demuxer.write(new Uint8Array(buffer));
+        
+        // Small delay to ensure all stream events have been processed
+        setTimeout(() => {
+          if (detectedTracks.length === 0) {
+            setStatus({ type: 'info', message: 'No subtitle tracks found in this MKV file.' });
+            return;
+          }
+
+          const tracksWithContent = detectedTracks.map(t => ({
+            ...t,
+            content: subtitleData[t.number]?.join('') || ''
+          }));
+
+          const validTracks = tracksWithContent.filter(t => t.content.length > 0);
+          setMkvTracks(validTracks);
+          
+          if (validTracks.length === 0) {
+            setStatus({ type: 'info', message: 'Subtitle tracks found, but they could not be extracted (possibly bitmap-based or incompatible codec).' });
+            return;
+          }
+
+          setShowMkvModal(true);
+          setStatus(null);
+        }, 200);
+      };
+      reader.readAsArrayBuffer(file);
+    } catch (err) {
+      console.error("MKV Error", err);
+      setStatus({ type: 'error', message: 'Error scanning MKV file tracks.' });
+    }
+  };
+
+  const selectMkvTrack = (track: any) => {
+    if (!track.content) {
+      setStatus({ type: 'error', message: 'This track is empty or could not be extracted.' });
+      return;
+    }
+
+    try {
+      setFileName(`${mkvFile?.name} [${track.language}]`);
+      const parsed = parseSubtitle(track.content, mkvFile?.name || 'mkv_sub');
+      setSubtitles(parsed);
+      setSelectedIndex(parsed.length > 0 ? 0 : null);
+      setShowMkvModal(false);
+      setStatus({ type: 'success', message: `Extracted ${parsed.length} subtitles from MKV track.` });
+    } catch (err) {
+      setStatus({ type: 'error', message: 'Failed to parse extracted subtitle track.' });
     }
   };
 
@@ -429,10 +523,7 @@ export default function App() {
         setVideoType(file.type || `video/${ext}`);
         
         if (ext === 'mkv') {
-          setStatus({ 
-            type: 'info', 
-            message: 'MKV files have limited browser support. If you hear sound but see no image, please convert to MP4 (H.264).' 
-          });
+          handleMkvUpload(file);
         } else {
           setStatus({ type: 'success', message: `Video loaded: ${file.name}` });
         }
@@ -1531,6 +1622,76 @@ export default function App() {
                 >
                   Apply Sync
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MKV Track Selection Modal */}
+      <AnimatePresence>
+        {showMkvModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-[#141414]/90 backdrop-blur-md"
+              onClick={() => setShowMkvModal(false)}
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 30 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 30 }}
+              className="relative bg-[#E4E3E0] w-full max-w-2xl p-8 shadow-2xl border border-[#141414] overflow-hidden flex flex-col max-h-[80vh]"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="font-serif italic text-3xl mb-1">Embedded Subtitles</h3>
+                  <p className="text-[10px] font-mono uppercase tracking-[0.2em] opacity-50">Select a track to extract from MKV</p>
+                </div>
+                <button 
+                  onClick={() => setShowMkvModal(false)}
+                  className="w-10 h-10 flex items-center justify-center hover:bg-[#141414]/5 rounded-full transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                <div className="grid gap-3">
+                  {mkvTracks.map((track) => (
+                    <button
+                      key={track.number}
+                      onClick={() => selectMkvTrack(track)}
+                      className="group flex items-center justify-between p-6 border border-[#141414]/10 hover:border-[#141414] hover:bg-[#141414] transition-all text-left"
+                    >
+                      <div className="flex items-center gap-6">
+                        <div className="w-12 h-12 flex items-center justify-center bg-[#141414]/5 group-hover:bg-[#E4E3E0]/10 rounded-full">
+                          <FileText size={20} className="group-hover:text-[#E4E3E0]" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-3 mb-1">
+                            <span className="font-serif italic text-xl group-hover:text-[#E4E3E0]">{track.name}</span>
+                            <span className="px-2 py-0.5 bg-[#141414] text-[#E4E3E0] text-[8px] font-mono rounded uppercase">
+                              {track.language}
+                            </span>
+                          </div>
+                          <p className="text-[10px] font-mono uppercase tracking-widest opacity-40 group-hover:opacity-60 group-hover:text-[#E4E3E0]">
+                            Codec: {track.type}
+                          </p>
+                        </div>
+                      </div>
+                      <ChevronRight size={20} className="opacity-0 group-hover:opacity-100 group-hover:text-[#E4E3E0] transform translate-x-[-10px] group-hover:translate-x-0 transition-all" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-8 pt-6 border-t border-[#141414]/10">
+                <p className="text-[9px] font-mono uppercase tracking-tight opacity-40 text-center">
+                  Only text-based formats (SRT, ASS) can be extracted. PGS/SUP tracks will be ignored.
+                </p>
               </div>
             </motion.div>
           </div>
