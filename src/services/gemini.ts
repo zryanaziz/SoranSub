@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. CRITICAL: Kurdish Sorani sentences MUST NOT start with leading punctuation like commas (,), ellipses (...), periods (.), exclamation points (!), or question marks (?). These must be moved to the end of the sentence or removed from the beginning. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
-const MODEL = "gemini-2.0-flash";
+const MODEL = "gemini-flash-latest";
 
 // Helper to extract JSON from potentially messy model output
 function extractJson(text: string): any {
@@ -56,7 +56,14 @@ function getAI() {
     throw new Error("API key must be set when using the Gemini API. Please click the 'Set API Key' button in the header or enter your key manually.");
   }
                  
-  return new GoogleGenAI({ apiKey });
+  return new GoogleGenAI({ 
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
+    }
+  });
 }
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> {
