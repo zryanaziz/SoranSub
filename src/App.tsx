@@ -433,7 +433,25 @@ export default function App() {
       }, 500);
     } catch (err: any) {
       console.error("Process failed:", err);
-      setStatus({ type: 'error', message: `Process failed: ${err.message || 'Unknown error'}. Please try again.` });
+      const isAuthError = err.message?.includes('API key expired') || err.message?.includes('API_KEY_INVALID');
+      
+      if (isAuthError) {
+        if (manualKey) {
+          setStatus({ 
+            type: 'error', 
+            message: 'Your custom API key has expired or is invalid. Please update or clear it in settings.' 
+          });
+        } else {
+          setStatus({ 
+            type: 'error', 
+            message: 'The system API key has expired. Please provide your own Gemini API key in settings to continue.' 
+          });
+        }
+        setShowKeyInput(true);
+      } else {
+        setStatus({ type: 'error', message: `Process failed: ${err.message || 'Unknown error'}. Please try again.` });
+      }
+      
       setIsTranslating(false);
       setProgress(0);
     }
@@ -864,14 +882,17 @@ export default function App() {
                           rows={2}
                         />
                       </div>
-                      <div className="p-1 italic font-serif" dir="rtl">
+                      <div 
+                        className="p-1 italic font-serif" 
+                        dir="rtl"
+                      >
                         <textarea 
                           value={item.translatedText || ''}
                           onChange={(e) => handleUpdateText(item.id, e.target.value, true)}
                           onFocus={() => handleSelectItem(idx)}
                           placeholder="Type translation..."
                           className={cn(
-                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed text-right",
+                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed text-right font-medium",
                             isActive ? "text-white placeholder:text-white/30" : "text-[#141414] placeholder:text-black/30"
                           )}
                           dir="rtl"
@@ -915,7 +936,7 @@ export default function App() {
         </AnimatePresence>
 
         <div className="flex items-center gap-2 md:gap-4">
-          <span className="hidden xs:inline">Gemini 2.0 Flash {manualKey && "(Custom Key)"}</span>
+          <span className="hidden xs:inline">Gemini 3.5 Flash {manualKey && "(Custom Key)"}</span>
           <div className={cn(
             "w-1.5 h-1.5 md:w-2 md:h-2 rounded-full animate-pulse",
             manualKey ? "bg-blue-500" : "bg-green-500"
@@ -944,20 +965,30 @@ export default function App() {
                 placeholder="AIzaSy..."
                 className="w-full bg-transparent border border-[#141414] p-2 text-xs font-mono mb-6 focus:outline-none focus:ring-1 focus:ring-[#141414]"
               />
-              <div className="flex justify-end gap-3">
-                <button 
-                  onClick={() => setShowKeyInput(false)}
-                  className="px-4 py-2 text-[10px] uppercase tracking-widest font-mono opacity-50 hover:opacity-100"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleSaveManualKey}
-                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest font-mono hover:bg-opacity-90"
-                >
-                  Save Key
-                </button>
-              </div>
+          <button 
+            onClick={() => {
+              setManualKey('');
+              setManualApiKey('');
+              setStatus({ type: 'info', message: 'Manual API Key cleared. Using default.' });
+            }}
+            className="px-4 py-2 border border-red-500 text-red-500 text-[10px] uppercase tracking-widest font-mono hover:bg-red-50"
+          >
+            Clear Key
+          </button>
+          <div className="flex justify-end gap-3">
+            <button 
+              onClick={() => setShowKeyInput(false)}
+              className="px-4 py-2 text-[10px] uppercase tracking-widest font-mono opacity-50 hover:opacity-100"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={handleSaveManualKey}
+              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest font-mono hover:bg-opacity-90"
+            >
+              Save Key
+            </button>
+          </div>
             </motion.div>
           </div>
         )}

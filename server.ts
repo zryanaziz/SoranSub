@@ -7,11 +7,10 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
-const MODEL = "gemini-2.0-flash";
+const MODEL = "gemini-3.5-flash";
 
 const BATCH_SCHEMA = {
-  type: Type.ARRAY,
-  items: { type: Type.STRING },
+  type: Type.STRING,
 };
 
 async function startServer() {
@@ -21,7 +20,7 @@ async function startServer() {
   app.use(express.json());
 
   const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
+    apiKey: process.env.GEMINI_API_KEY || "",
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -32,11 +31,15 @@ async function startServer() {
   // API Routes
   app.post("/api/translate", async (req, res) => {
     try {
-      const customKey = req.headers['x-api-key'] as string;
+      const customKeyFromHeader = req.headers['x-api-key'] as string;
+      const customKey = (customKeyFromHeader && customKeyFromHeader !== "null" && customKeyFromHeader !== "undefined" && customKeyFromHeader.trim().length > 10) ? customKeyFromHeader.trim() : null;
+      
       const { text } = req.body;
       if (!text) {
         return res.status(400).json({ error: "Text is required" });
       }
+
+      console.log(`Translation request using ${customKey ? 'custom' : 'system'} key`);
 
       const client = customKey ? new GoogleGenAI({
         apiKey: customKey,
@@ -54,17 +57,21 @@ async function startServer() {
       res.json({ translation: (response.text || text).replace(/\\n/g, '\n') });
     } catch (error: any) {
       console.error("Translation error:", error);
-      res.status(500).json({ error: error.message });
+      res.status(400).json({ error: error.message });
     }
   });
 
   app.post("/api/translate-batch", async (req, res) => {
     try {
-      const customKey = req.headers['x-api-key'] as string;
+      const customKeyFromHeader = req.headers['x-api-key'] as string;
+      const customKey = (customKeyFromHeader && customKeyFromHeader !== "null" && customKeyFromHeader !== "undefined" && customKeyFromHeader.trim().length > 10) ? customKeyFromHeader.trim() : null;
+      
       const { texts } = req.body;
       if (!texts || !Array.isArray(texts)) {
         return res.status(400).json({ error: "Texts array is required" });
       }
+
+      console.log(`Batch translation request (${texts.length} items) using ${customKey ? 'custom' : 'system'} key`);
 
       const client = customKey ? new GoogleGenAI({
         apiKey: customKey,
@@ -90,7 +97,10 @@ async function startServer() {
         config: {
           systemInstruction: "You are a professional Kurdish Sorani translator and editor. You translate English subtitles into natural, refined Kurdish Sorani. You always return the exact same number of lines as provided.",
           responseMimeType: "application/json",
-          responseSchema: BATCH_SCHEMA,
+          responseSchema: {
+            type: Type.ARRAY,
+            items: BATCH_SCHEMA
+          },
         }
       });
 
