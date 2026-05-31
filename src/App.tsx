@@ -642,13 +642,14 @@ export default function App() {
   };
 
   const handleCloseSubtitle = () => {
-    if (window.confirm('Are you sure you want to close the current subtitle file? Any unsaved changes will be lost.')) {
-      setSubtitles([]);
-      setFileName('');
-      setSelectedIndex(null);
-      localStorage.removeItem('soransub_current_session');
-      setStatus({ type: 'info', message: 'Subtitle file closed.' });
+    setSubtitles([]);
+    setFileName('');
+    setSelectedIndex(null);
+    localStorage.removeItem('soransub_current_session');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
+    setStatus({ type: 'info', message: 'Subtitle file closed.' });
   };
 
   const handleSyncSubtitles = () => {
