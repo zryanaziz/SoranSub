@@ -437,6 +437,13 @@ export default function App() {
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (file) {
+      // Reset state for a clean overwrite
+      setStatus(null);
+      setProgress(0);
+      setShowFinishedMessage(false);
+      setSearchQuery('');
+      setReplaceQuery('');
+      
       const ext = file.name.toLowerCase().split('.').pop();
       
       if (ext === 'sup') {
@@ -456,7 +463,13 @@ export default function App() {
             const parsed = parseSubtitle(content, file.name);
             setSubtitles(parsed);
             setSelectedIndex(parsed.length > 0 ? 0 : null);
-            setStatus({ type: 'success', message: `Loaded ${parsed.length} subtitles from ${file.name}.` });
+            
+            // Clear file input value to allow re-opening same file if needed
+            if (fileInputRef.current) {
+              fileInputRef.current.value = '';
+            }
+            
+            setStatus({ type: 'success', message: `Overwritten with ${parsed.length} subtitles from ${file.name}.` });
           } catch (err) {
             setStatus({ type: 'error', message: `Failed to parse ${ext?.toUpperCase()} file.` });
           }
@@ -714,7 +727,26 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] flex flex-col relative">
+    <div {...getRootProps()} className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] flex flex-col relative focus:outline-none">
+      <input {...getInputProps()} />
+      
+      {/* Visual Indicator for Dragging */}
+      <AnimatePresence>
+        {isDragActive && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-[#141414] bg-opacity-40 backdrop-blur-md flex items-center justify-center p-8 pointer-events-none"
+          >
+            <div className="border-4 border-dashed border-white/40 p-12 flex flex-col items-center gap-4">
+              <Upload size={64} className="text-white animate-bounce" />
+              <p className="text-white font-mono text-xl uppercase tracking-tighter">Drop to replace current file</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Global Progress Bar */}
       <AnimatePresence>
         {isTranslating && (
@@ -936,13 +968,10 @@ export default function App() {
         <div className="w-full border-r border-[#141414] flex flex-col transition-all duration-300">
           {subtitles.length === 0 ? (
             <div 
-              {...getRootProps()} 
               className={cn(
-                "flex-1 flex flex-col items-center justify-center p-8 md:p-12 m-4 md:m-6 border-2 border-dashed border-[#141414] border-opacity-20 cursor-pointer transition-all",
-                isDragActive && "bg-[#141414] bg-opacity-5 border-opacity-100"
+                "flex-1 flex flex-col items-center justify-center p-8 md:p-12 m-4 md:m-6 border-2 border-dashed border-[#141414] border-opacity-20 transition-all",
               )}
             >
-              <input {...getInputProps()} />
               <Upload size={40} className="mb-4 opacity-20 md:size-12" />
               <h2 className="font-serif italic text-xl md:text-2xl mb-2 text-center">Drop Subtitles here</h2>
               <p className="text-[10px] md:text-xs font-mono opacity-50 uppercase tracking-widest text-center">Supports SRT, VTT, SUB (MicroDVD)</p>
