@@ -30,6 +30,7 @@ import { twMerge } from 'tailwind-merge';
 
 import { SubtitleItem } from './types';
 import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stripFormatting } from './lib/subtitle-utils';
+import { getMKVTracks, extractMKVSubtitle, mkvSubtitlesToSRT, MKVTrack } from './lib/mkv-utils';
 import { 
   translateToKurdishSorani, 
   jointTranslateRefineBatch,
@@ -61,6 +62,12 @@ export default function App() {
   const [syncOffset, setSyncOffset] = useState('0');
   const [selectedAction, setSelectedAction] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
+  
+  // MKV specific state
+  const [mkvFile, setMkvFile] = useState<File | null>(null);
+  const [mkvTracks, setMkvTracks] = useState<MKVTrack[]>([]);
+  const [showTrackSelector, setShowTrackSelector] = useState(false);
+  const [isExtractingMkv, setIsExtractingMkv] = useState(false);
 
   // Auto-save to workspace (for GitHub Sync)
   useEffect(() => {
@@ -174,7 +181,8 @@ export default function App() {
     
     // Improved Regex: Only remove brackets if they seem to be SDH markers (sound effects, speaker names)
     // We preserve them if they might contain actual dialogue text (especially Kurdish)
-    const sdhRegex = /\[[A-Z0-9\s.,!?-]{2,}\]|\([A-Z0-9\s.,!?-]{2,}\)|\♪[\s\S]*?\♪|<[^>]*>|[♪♫]/gi;
+    // Also specifically handle musical notes inside brackets [♪]
+    const sdhRegex = /\[\s*[♪♫\s]+\s*\]|\[[A-Z0-9\s.,!?-]{2,}\]|\([A-Z0-9\s.,!?-]{2,}\)|\♪[\s\S]*?\♪|<[^>]*>|[♪♫]/gi;
     
     let tagCount = 0;
     const initialCount = subtitles.length;
@@ -183,6 +191,10 @@ export default function App() {
     const swapSymbols = (str: string) => {
       if (!str) return str;
       let s = str.trim();
+
+      // Specifically remove hyphens from start/end of every line as requested
+      s = s.split('\n').map(line => line.trim().replace(/^-+|-+$/g, '').trim()).join('\n').trim();
+      if (!s) return "";
 
       // Detect if the string contains Kurdish/Arabic characters
       const hasArabicChars = /[\u0600-\u06FF]/.test(s);
@@ -434,7 +446,7 @@ export default function App() {
     }
   };
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (file) {
       // Reset state for a clean overwrite
@@ -451,6 +463,25 @@ export default function App() {
           type: 'error', 
           message: '.sup files are bitmap-based (PGS) and cannot be edited as text. Please convert them to .srt or .vtt first.' 
         });
+        return;
+      }
+
+      if (ext === 'mkv') {
+        setFileName(file.name);
+        setMkvFile(file);
+        setStatus({ type: 'info', message: 'Scanning MKV for subtitle tracks...' });
+        try {
+          const tracks = await getMKVTracks(file);
+          if (tracks.length === 0) {
+            setStatus({ type: 'error', message: 'No subtitle tracks found in MKV file.' });
+            return;
+          }
+          setMkvTracks(tracks);
+          setShowTrackSelector(true);
+        } catch (err) {
+          console.error("MKV scan error:", err);
+          setStatus({ type: 'error', message: 'Failed to scan MKV file.' });
+        }
         return;
       }
 
@@ -485,9 +516,11 @@ export default function App() {
       'text/plain': ['.srt', '.vtt', '.sub', '.ass'],
       'application/x-subrip': ['.srt'],
       'text/vtt': ['.vtt'],
-      'application/octet-stream': ['.sup']
+      'application/octet-stream': ['.sup'],
+      'video/x-matroska': ['.mkv']
     },
-    multiple: false 
+    multiple: false,
+    noClick: true
   } as any);
 
   const handleUpdateText = (id: string, text: string, isTranslation = false) => {
@@ -499,6 +532,36 @@ export default function App() {
           } 
         : item
     ));
+  };
+
+  const handleSelectMkvTrack = async (trackNumber: number) => {
+    if (!mkvFile) return;
+    
+    setIsExtractingMkv(true);
+    setStatus({ type: 'info', message: 'Extracting subtitles from MKV...' });
+    setShowTrackSelector(false);
+    
+    try {
+      const mkvSubs = await extractMKVSubtitle(mkvFile, trackNumber);
+      const srtContent = mkvSubtitlesToSRT(mkvSubs);
+      
+      const track = mkvTracks.find(t => t.number === trackNumber);
+      const trackName = track ? `_Track${track.number}_${track.language || track.codec}` : '';
+      setFileName(prev => prev + trackName);
+      
+      const parsed = parseSubtitle(srtContent, mkvFile.name);
+      setSubtitles(parsed);
+      setSelectedIndex(parsed.length > 0 ? 0 : null);
+      
+      setStatus({ type: 'success', message: `Extracted ${parsed.length} subtitles from MKV.` });
+    } catch (err) {
+       console.error("MKV extraction error:", err);
+       setStatus({ type: 'error', message: 'Failed to extract subtitles from MKV.' });
+    } finally {
+      setIsExtractingMkv(false);
+      setMkvFile(null);
+      setMkvTracks([]);
+    }
   };
 
   const handleProcessSubtitles = async (indices: number[], shouldRefine: boolean = true) => {
@@ -747,9 +810,58 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* MKV Track Selector */}
+      <AnimatePresence>
+        {showTrackSelector && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[#141414] bg-opacity-80 p-4 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#E4E3E0] border border-[#141414] p-6 max-w-md w-full shadow-2xl"
+            >
+              <div className="flex justify-between items-start mb-4">
+                <h3 className="text-lg font-serif italic text-[#141414]">Select Subtitle Track</h3>
+                <button onClick={() => setShowTrackSelector(false)} className="opacity-50 hover:opacity-100">
+                  <X size={20} />
+                </button>
+              </div>
+              <p className="text-[10px] uppercase font-mono opacity-60 mb-4 tracking-widest">
+                Found {mkvTracks.length} subtitle tracks in this MKV file.
+              </p>
+              
+              <div className="max-h-[300px] overflow-y-auto space-y-2 mb-6 pr-2 scrollbar-hide">
+                {mkvTracks.map((track) => (
+                  <button
+                    key={track.number}
+                    onClick={() => handleSelectMkvTrack(track.number)}
+                    className="w-full flex items-center justify-between p-3 border border-[#141414] border-opacity-10 hover:border-opacity-100 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all group"
+                  >
+                    <div className="text-left">
+                      <p className="text-xs font-bold font-mono">Track {track.number}: {track.name || 'Unnamed'}</p>
+                      <p className="text-[10px] opacity-60 group-hover:opacity-100 font-mono uppercase">
+                        {track.codec.replace('S_', '')} • {track.language || 'Unknown Language'}
+                      </p>
+                    </div>
+                    <ChevronRight size={16} />
+                  </button>
+                ))}
+              </div>
+              
+              <button 
+                onClick={() => setShowTrackSelector(false)}
+                className="w-full py-2 text-[10px] uppercase tracking-widest font-mono opacity-50 hover:opacity-100 border border-[#141414]"
+              >
+                Cancel
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Global Progress Bar */}
       <AnimatePresence>
-        {isTranslating && (
+        {(isTranslating || isExtractingMkv) && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -757,9 +869,12 @@ export default function App() {
             className="fixed top-0 left-0 right-0 h-1.5 md:h-2 bg-[#141414] z-[100] origin-left overflow-hidden shadow-sm"
           >
             <motion.div 
-              className="h-full bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.8)]"
+              className={cn(
+                "h-full shadow-[0_0_10px_rgba(249,115,22,0.8)]",
+                isExtractingMkv ? "bg-blue-500 w-full animate-pulse" : "bg-orange-500"
+              )}
               initial={{ width: "0%" }}
-              animate={{ width: `${progress}%` }}
+              animate={{ width: isExtractingMkv ? "100%" : `${progress}%` }}
               transition={{ ease: "easeOut", duration: 0.3 }}
             />
           </motion.div>
@@ -865,7 +980,7 @@ export default function App() {
             type="file" 
             ref={fileInputRef} 
             className="hidden" 
-            accept=".srt,.vtt,.sub,.ass" 
+            accept=".srt,.vtt,.sub,.ass,.mkv" 
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
                 onDrop([e.target.files[0]]);
@@ -968,8 +1083,9 @@ export default function App() {
         <div className="w-full border-r border-[#141414] flex flex-col transition-all duration-300">
           {subtitles.length === 0 ? (
             <div 
+              onClick={() => fileInputRef.current?.click()}
               className={cn(
-                "flex-1 flex flex-col items-center justify-center p-8 md:p-12 m-4 md:m-6 border-2 border-dashed border-[#141414] border-opacity-20 transition-all",
+                "flex-1 flex flex-col items-center justify-center p-8 md:p-12 m-4 md:m-6 border-2 border-dashed border-[#141414] border-opacity-20 transition-all cursor-pointer hover:bg-[#141414] hover:bg-opacity-5",
               )}
             >
               <Upload size={40} className="mb-4 opacity-20 md:size-12" />
@@ -1072,14 +1188,14 @@ export default function App() {
                           rows={2}
                         />
                       </div>
-                      <div className="p-1 italic font-serif" dir="auto">
+                      <div className="p-1 italic font-serif" dir="rtl">
                         <textarea 
                           value={item.translatedText || ''}
                           onChange={(e) => handleUpdateText(item.id, e.target.value, true)}
                           onFocus={() => handleSelectItem(idx)}
                           placeholder="Type translation..."
                           className={cn(
-                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed",
+                            "w-full bg-transparent p-1 md:p-2 text-xs md:text-sm focus:outline-none resize-none min-h-[40px] border-none leading-relaxed text-right",
                             isActive ? "text-white placeholder:text-white/30" : "text-[#141414] placeholder:text-black/30"
                           )}
                           rows={2}
