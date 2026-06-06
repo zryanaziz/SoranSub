@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. CRITICAL: Kurdish Sorani sentences MUST NOT start with leading punctuation like commas (,), ellipses (...), periods (.), exclamation points (!), or question marks (?). These must be moved to the end of the sentence or removed from the beginning. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
+const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. CRITICAL: Kurdish Sorani sentences MUST NOT start with leading punctuation like commas (,), ellipses (...), periods (.), exclamation points (!), or question marks (?). These must be moved to the end of the sentence or removed from the beginning. Transliterate English abbreviations (e.g., CIA, FBI, NASA) into phonetic Kurdish characters based on their pronunciation (e.g., 'CIA' becomes 'سی ئای ئەی', 'FBI' becomes 'ئێف بی ئای') instead of leaving them in English. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
 const MODELS = [
   "gemini-3.5-flash", 
   "gemini-2.5-flash", 
@@ -160,7 +160,8 @@ export async function jointTranslateRefineBatch(texts: string[]): Promise<string
       5. ORDER: Maintain the exact order of the provided English lines.
       6. COUNT: You MUST return exactly ${texts.length} strings in the array.
       7. NEWLINES: If an input string has a line break, the translation MUST also have a line break.
-      8. DO NOT ECHO: Do not return the English text. If a line cannot be translated, provide the best possible transliteration or professional adaptation in Sorani Kurdish.
+      8. ABBREVIATIONS: Transliterate English abbreviations (like CIA, FBI, AI, IT) into phonetic Kurdish Sorani characters based on how they are pronounced letters (e.g., 'FBI' → 'ئێف بی ئای', 'CIA' → 'سی ئای ئەی') instead of leaving them in English.
+      9. DO NOT ECHO: Do not return the English text. If a line cannot be translated, provide the best possible transliteration or professional adaptation in Sorani Kurdish.
       
       INPUT ENGLISH LINES:
       ${JSON.stringify(texts)}`;
