@@ -179,10 +179,9 @@ export default function App() {
   const handleCleanUpSubtitles = () => {
     if (subtitles.length === 0) return;
     
-    // Improved Regex: Only remove brackets if they seem to be SDH markers (sound effects, speaker names)
-    // We preserve them if they might contain actual dialogue text (especially Kurdish)
-    // Also specifically handle musical notes inside brackets [♪]
-    const sdhRegex = /\[\s*[♪♫\s]+\s*\]|\[[A-Z0-9\s.,!?-]{2,}\]|\([A-Z0-9\s.,!?-]{2,}\)|\♪[\s\S]*?\♪|<[^>]*>|[♪♫]/gi;
+    // Improved SDH removal: Brackets, parentheses, and speaker tags like "NAME: "
+    const sdhRegex = /\[[^\]]*\]|\([^)]*\)|<[^>]*>|[♪♫\u266a\u266b]/gi;
+    const speakerRegex = /^[A-ZÀ-ÿ\s]+[:\-]\s+/gm;
     
     let tagCount = 0;
     const initialCount = subtitles.length;
@@ -200,12 +199,10 @@ export default function App() {
       const hasArabicChars = /[\u0600-\u06FF]/.test(s);
       
       if (hasArabicChars) {
-        // 1. Conversion of English to Kurdish punctuation
-        s = s.replace(/,/g, '،')
-             .replace(/\?/g, '؟')
-             .replace(/;/g, '؛');
+        // Convert ? to Kurdish variant
+        s = s.replace(/\?/g, '؟');
 
-        // 2. Mirror brackets (The actual "Symbol Swap" for RTL/LTR compatibility)
+        // Mirror brackets (The actual "Symbol Swap" for RTL/LTR compatibility)
         const mirrorMap: Record<string, string> = {
           '(': ')',
           ')': '(',
@@ -226,9 +223,13 @@ export default function App() {
         s = mirrored;
       }
       
-      // 3. Bidirectional Punctuation Swap (The robust toggle logic)
-      // Symbols we want to swap from side to side - EXCLUDING question marks as requested
-      const symbolsToSwap = ['...', '..', '!!!', '!!', '!', '،', '؛', ':', ';', ',', '.', '¿', '¡'];
+      // REMOVAL: Remove the specific punctuation requested
+      // ",,", ".", "!", "،", "؛", "..."
+      s = s.replace(/\.\.\.|\.\.|\.|!|،|؛|,/g, '');
+
+      // Bidirectional Punctuation Swap (The robust toggle logic)
+      // Only handle question marks as requested
+      const symbolsToSwap = ['؟', '?'];
       
       const escapedSymbols = symbolsToSwap.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
       const leadingRegex = new RegExp(`^(${escapedSymbols}|\\s)+`);
@@ -256,7 +257,6 @@ export default function App() {
         }
 
         // The "Symbol Swap": move leading to back, trailing to front
-        // We trim intermediate spaces but preserve punctuation clusters
         s = (trailingPunc.trim() + " " + coreText.trim() + " " + leadingPunc.trim()).trim();
       }
       
@@ -265,11 +265,11 @@ export default function App() {
 
     // Step 1: Strip tags and swap symbols
     const step1 = subtitles.map(item => {
-      // Remove SDH markers but keep brackets if they might be dialogue
-      let newText = item.text.replace(sdhRegex, '').replace(/[ \t]+/g, ' ').trim();
-      let newTranslated = item.translatedText ? item.translatedText.replace(sdhRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
+      // Remove SDH markers and speaker names
+      let newText = item.text.replace(sdhRegex, '').replace(speakerRegex, '').replace(/[ \t]+/g, ' ').trim();
+      let newTranslated = item.translatedText ? item.translatedText.replace(sdhRegex, '').replace(speakerRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
       
-      // Character swap logic
+      // Punctuation and cleaning logic
       newText = swapSymbols(newText);
       if (newTranslated) {
         newTranslated = swapSymbols(newTranslated);
@@ -294,7 +294,7 @@ export default function App() {
     
     setStatus({ 
       type: 'success', 
-      message: `Clean Up: Tags stripped from ${tagCount} blocks. ${removedCount > 0 ? `${removedCount} symbol-only blocks removed.` : ''}` 
+      message: `Clean Up: SDH & tags stripped from ${tagCount} blocks. ${removedCount > 0 ? `${removedCount} empty blocks removed.` : ''}` 
     });
   };
 
