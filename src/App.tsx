@@ -191,8 +191,13 @@ export default function App() {
       if (!str) return str;
       let s = str.trim();
 
-      // Specifically remove hyphens from start/end of every line as requested
-      s = s.split('\n').map(line => line.trim().replace(/^-+|-+$/g, '').trim()).join('\n').trim();
+      // REMOVAL: Remove hyphens and specific punctuation (,, . ! ، ؛ ...) ONLY from start or end of lines
+      s = s.split('\n').map(line => {
+        return line.trim()
+          .replace(/^[-.,!،؛\s]+|[-.,!،؛\s]+$/g, '') // Remove these symbols from start/end
+          .replace(/^\.\.\.|\.\.\.$/g, '')           // Handle triple dots specifically if needed
+          .trim();
+      }).join('\n').trim();
       if (!s) return "";
 
       // Detect if the string contains Kurdish/Arabic characters
@@ -223,10 +228,6 @@ export default function App() {
         s = mirrored;
       }
       
-      // REMOVAL: Remove the specific punctuation requested
-      // ",,", ".", "!", "،", "؛", "..."
-      s = s.replace(/\.\.\.|\.\.|\.|!|،|؛|,/g, '');
-
       // Bidirectional Punctuation Swap (The robust toggle logic)
       // Only handle question marks as requested
       const symbolsToSwap = ['؟', '?'];
