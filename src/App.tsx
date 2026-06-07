@@ -282,20 +282,30 @@ export default function App() {
       return { ...item, text: newText, translatedText: newTranslated };
     });
 
-    // Step 2: Filter out empty blocks and re-index
-    const final = step1.filter(item => {
-      const hasText = item.text.trim().length > 0;
-      const hasTranslated = item.translatedText ? item.translatedText.trim().length > 0 : false;
-      return hasText || hasTranslated;
-    }).map((s, idx) => ({ ...s, index: idx + 1 }));
+    // Step 2: Handle re-indexing and selection carefully
+    // We keep all blocks but leave noise-only ones blank, as requested, to avoid arrangement issues
+    // and ensure indexing is perfectly sequential
+    const final = step1.map((item, idx) => ({
+      ...item,
+      index: idx + 1
+    }));
 
-    const removedCount = initialCount - final.length;
+    // Find the new index of the previously selected item to keep selection stable
+    let newSelectedIndex = selectedIndex;
+    if (selectedIndex !== null) {
+      const selectedId = subtitles[selectedIndex]?.id;
+      if (selectedId) {
+        const foundIdx = final.findIndex(s => s.id === selectedId);
+        if (foundIdx !== -1) newSelectedIndex = foundIdx;
+      }
+    }
+
     setSubtitles(final);
-    setSelectedIndex(final.length > 0 ? 0 : null);
+    if (newSelectedIndex !== null) setSelectedIndex(newSelectedIndex);
     
     setStatus({ 
       type: 'success', 
-      message: `Clean Up: SDH & tags stripped from ${tagCount} blocks. ${removedCount > 0 ? `${removedCount} empty blocks removed.` : ''}` 
+      message: `Clean Up: SDH & tags stripped from ${tagCount} blocks. All ${final.length} blocks re-indexed correctly.` 
     });
   };
 
@@ -1189,7 +1199,7 @@ export default function App() {
                           rows={2}
                         />
                       </div>
-                      <div className="p-1 italic font-serif" dir="rtl">
+                      <div className="p-1 italic font-serif relative" dir="rtl">
                         <textarea 
                           value={item.translatedText || ''}
                           onChange={(e) => handleUpdateText(item.id, e.target.value, true)}
