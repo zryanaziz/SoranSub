@@ -191,11 +191,11 @@ export default function App() {
       if (!str) return str;
       let s = str.trim();
 
-      // REMOVAL: Remove hyphens and specific punctuation (,, . ! ، ؛ ...) ONLY from start or end of lines
+      // REMOVAL: Remove hyphens, dashes and specific punctuation ONLY from start or end of lines
       s = s.split('\n').map(line => {
         return line.trim()
-          .replace(/^[-.,!،؛\s]+|[-.,!،؛\s]+$/g, '') // Remove these symbols from start/end
-          .replace(/^\.\.\.|\.\.\.$/g, '')           // Handle triple dots specifically if needed
+          .replace(/^[-–—.,!،؛\s]+|[-–—.,!،؛\s]+$/g, '') // Remove these symbols from start/end
+          .replace(/^\.\.\.|\.\.\.$/g, '')             // Handle triple dots specifically
           .trim();
       }).join('\n').trim();
       if (!s) return "";
@@ -226,39 +226,6 @@ export default function App() {
           mirrored += mirrorMap[s[i]] || s[i];
         }
         s = mirrored;
-      }
-      
-      // Bidirectional Punctuation Swap (The robust toggle logic)
-      // Only handle question marks as requested
-      const symbolsToSwap = ['؟', '?'];
-      
-      const escapedSymbols = symbolsToSwap.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      const leadingRegex = new RegExp(`^(${escapedSymbols}|\\s)+`);
-      const trailingRegex = new RegExp(`(${escapedSymbols}|\\s)+$`);
-
-      const leadingMatch = s.match(leadingRegex);
-      const trailingMatch = s.match(trailingRegex);
-
-      if (leadingMatch || trailingMatch) {
-        let leadingPunc = "";
-        let trailingPunc = "";
-        let coreText = s;
-
-        if (leadingMatch) {
-          leadingPunc = leadingMatch[0];
-          coreText = coreText.substring(leadingPunc.length);
-        }
-        if (trailingMatch) {
-          // Re-calculate trailing match after stripping leading match to avoid double-dipping in tiny strings
-          const remainingTrailingMatch = coreText.match(trailingRegex);
-          if (remainingTrailingMatch) {
-            trailingPunc = remainingTrailingMatch[0];
-            coreText = coreText.substring(0, coreText.length - trailingPunc.length);
-          }
-        }
-
-        // The "Symbol Swap": move leading to back, trailing to front
-        s = (trailingPunc.trim() + " " + coreText.trim() + " " + leadingPunc.trim()).trim();
       }
       
       return s;
