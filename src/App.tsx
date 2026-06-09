@@ -82,11 +82,11 @@ export default function App() {
         // Force .srt extension and append .ku for translation clarity
         // Also strip _TrackXX patterns as requested
         let syncName = fileName.replace(/_Track\d+/gi, '');
-        if (syncName.includes('.')) {
-          syncName = syncName.substring(0, syncName.lastIndexOf('.')) + '.ku.srt';
-        } else {
-          syncName = syncName + '.ku.srt';
-        }
+        
+        // Remove existing extensions to rebuild correctly
+        syncName = syncName.replace(/\.ku\.srt$/i, '').replace(/\.srt$/i, '').replace(/\.vtt$/i, '').replace(/\.ass$/i, '').replace(/\.sub$/i, '');
+        
+        syncName = syncName + '.ku.srt';
 
         const response = await fetch('/api/save-subtitles', {
           method: 'POST',
@@ -243,6 +243,11 @@ export default function App() {
       if (newTranslated) {
         newTranslated = swapSymbols(newTranslated);
       }
+
+      // If the text becomes empty after stripping tags, we pad with a space 
+      // to keep the block "alive" and valid for subtitle players/editors.
+      if (!newText) newText = " ";
+      if (newTranslated === "") newTranslated = " ";
 
       if (newText !== item.text || newTranslated !== item.translatedText) {
         tagCount++;
@@ -882,26 +887,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Status Message - Moved here */}
-              <div className="mt-2 min-h-[14px]">
-                <AnimatePresence mode="wait">
-                  {status && (
-                    <motion.div 
-                      key={status.message}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 10 }}
-                      className={cn(
-                        "flex items-center gap-2 truncate text-[9px] md:text-[10px] font-mono uppercase tracking-tight",
-                        status.type === 'success' ? "text-green-600" : status.type === 'error' ? "text-red-600" : "text-[#141414]/70"
-                      )}
-                    >
-                      {status.type === 'success' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                      <span className="truncate">{status.message}</span>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
             </div>
           </div>
 
@@ -1215,6 +1200,27 @@ export default function App() {
           <span className="hidden sm:inline">Blocks: {subtitles.length}</span>
           <span>UTF-8 / Kurdish Sorani AI</span>
         </div>
+
+        <div className="flex-1 flex justify-center px-4 max-w-full overflow-hidden">
+          <AnimatePresence mode="wait">
+            {status && (
+              <motion.div 
+                key={status.message}
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -5 }}
+                className={cn(
+                  "flex items-center gap-2 truncate text-[9px] md:text-[10px] tracking-tight",
+                  status.type === 'success' ? "text-green-600" : status.type === 'error' ? "text-red-600" : "text-[#141414]/70"
+                )}
+              >
+                {status.type === 'success' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                <span className="truncate">{status.message}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
         <div className="flex items-center gap-4">
           <span className="opacity-40">Build 2026.06</span>
         </div>
