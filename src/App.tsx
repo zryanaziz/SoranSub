@@ -251,11 +251,8 @@ export default function App() {
     });
 
     // handleCleanUpSubtitles logic updated to keep all items
-    const final = step1.map((item, idx) => ({
-      ...item,
-      index: idx + 1 // Re-index progressively
-    }));
-    // No .filter() used, so empty blocks stay!
+    const final = step1;
+    // No re-indexing or filtering used, so indices and empty blocks stay as they were!
 
     // Find the new index of the previously selected item to keep selection stable
     let newSelectedIndex = selectedIndex;
@@ -272,7 +269,7 @@ export default function App() {
     
     setStatus({ 
       type: 'success', 
-      message: `Clean Up: SDH & tags stripped from ${tagCount} blocks. All ${final.length} blocks re-indexed correctly.` 
+      message: `Clean Up: SDH & tags stripped from ${tagCount} blocks. All ${final.length} blocks processed.` 
     });
   };
 
