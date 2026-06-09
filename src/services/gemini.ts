@@ -10,7 +10,7 @@ const MODELS = [
 ];
 let currentModelIndex = 0;
 
-function getCurrentModel() {
+export function getCurrentModel() {
   return MODELS[currentModelIndex];
 }
 

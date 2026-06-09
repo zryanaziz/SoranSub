@@ -35,6 +35,7 @@ import {
   translateToKurdishSorani, 
   jointTranslateRefineBatch,
   setManualApiKey,
+  getCurrentModel
 } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
@@ -249,13 +250,12 @@ export default function App() {
       return { ...item, text: newText, translatedText: newTranslated };
     });
 
-    // Step 2: Handle re-indexing and selection carefully
-    // We keep all blocks but leave noise-only ones blank, as requested, to avoid arrangement issues
-    // and ensure indexing is perfectly sequential
+    // handleCleanUpSubtitles logic updated to keep all items
     const final = step1.map((item, idx) => ({
       ...item,
-      index: idx + 1
+      index: idx + 1 // Re-index progressively
     }));
+    // No .filter() used, so empty blocks stay!
 
     // Find the new index of the previously selected item to keep selection stable
     let newSelectedIndex = selectedIndex;
@@ -873,14 +873,38 @@ export default function App() {
                   {fileName}
                 </p>
               )}
-              {subtitles.length > 0 && (
-                <p className="text-[8px] md:text-[10px] uppercase tracking-widest opacity-60 font-mono leading-tight mt-1">
-                  Progress: {translatedCount} / {subtitles.length} ({Math.round((translatedCount / subtitles.length) * 100)}%)
-                </p>
-              )}
-              {subtitles.length === 0 && !fileName && (
-                <p className="text-[10px] md:text-xs font-serif italic">SoranSub Kurdish AI</p>
-              )}
+              <div className="flex items-center gap-3 mt-1.5">
+                {subtitles.length > 0 && (
+                  <p className="text-[8px] md:text-[10px] uppercase tracking-widest opacity-60 font-mono leading-tight">
+                    Progress: {translatedCount} / {subtitles.length}
+                  </p>
+                )}
+                <div className="flex items-center gap-2 px-1.5 py-0.5 bg-[#141414]/5 rounded-sm border border-[#141414]/10 text-[8px] md:text-[10px] font-mono uppercase tracking-widest">
+                  <span className="opacity-60">{getCurrentModel()}</span>
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                </div>
+              </div>
+
+              {/* Status Message - Moved here */}
+              <div className="mt-2 min-h-[14px]">
+                <AnimatePresence mode="wait">
+                  {status && (
+                    <motion.div 
+                      key={status.message}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                      className={cn(
+                        "flex items-center gap-2 truncate text-[9px] md:text-[10px] font-mono uppercase tracking-tight",
+                        status.type === 'success' ? "text-green-600" : status.type === 'error' ? "text-red-600" : "text-[#141414]/70"
+                      )}
+                    >
+                      {status.type === 'success' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                      <span className="truncate">{status.message}</span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
           </div>
 
@@ -1189,35 +1213,13 @@ export default function App() {
       </main>
 
       {/* Status Bar */}
-      <footer className="border-t border-[#141414] px-4 md:px-6 py-1.5 md:py-2 flex items-center justify-between bg-[#E4E3E0] text-[8px] md:text-[10px] font-mono uppercase tracking-widest">
-        <div className="flex items-center gap-4 md:gap-6">
+      <footer className="border-t border-[#141414] px-4 md:px-6 py-2 bg-[#F0EFED] flex items-center justify-between text-[8px] md:text-[10px] font-mono uppercase tracking-widest">
+        <div className="flex items-center gap-6">
           <span className="hidden sm:inline">Blocks: {subtitles.length}</span>
-          {subtitles.length > 0 && (
-            <span>Done: {subtitles.filter(s => s.translatedText).length}/{subtitles.length}</span>
-          )}
+          <span>UTF-8 / Kurdish Sorani AI</span>
         </div>
-        
-        <AnimatePresence mode="wait">
-          {status && (
-            <motion.div 
-              key={status.message}
-              initial={{ opacity: 0, y: 5 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -5 }}
-              className={cn(
-                "flex items-center gap-1 md:gap-2 truncate max-w-[50%]",
-                status.type === 'success' ? "text-green-600" : status.type === 'error' ? "text-red-600" : ""
-              )}
-            >
-              {status.type === 'success' ? <CheckCircle2 size={10} /> : <AlertCircle size={10} />}
-              <span className="truncate">{status.message}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div className="flex items-center gap-2 md:gap-4">
-          <span className="hidden xs:inline">Gemini 3 Flash</span>
-          <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-green-500 animate-pulse" />
+        <div className="flex items-center gap-4">
+          <span className="opacity-40">Build 2026.06</span>
         </div>
       </footer>
 
