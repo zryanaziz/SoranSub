@@ -2,11 +2,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const SYSTEM_INSTRUCTION = "You are a professional subtitle translator specializing in Kurdish Sorani. Translate the provided text accurately, maintaining tone and context. CRITICAL: Kurdish Sorani sentences MUST NOT start with leading punctuation like commas (,), ellipses (...), periods (.), exclamation points (!), or question marks (?). These must be moved to the end of the sentence or removed from the beginning. Transliterate English abbreviations (e.g., CIA, FBI, NASA) into phonetic Kurdish characters based on their pronunciation (e.g., 'CIA' becomes 'سی ئای ئەی', 'FBI' becomes 'ئێف بی ئای') instead of leaving them in English. Preserve all line breaks (newlines) from the original text. Return ONLY the translation.";
 const MODELS = [
+  "gemini-3.1-flash-lite", 
+  "gemini-2.5-flash-lite", 
   "gemini-3.5-flash", 
   "gemini-2.5-flash", 
-  "gemini-3.1-flash-lite", 
-  "gemini-3-flash", 
-  "gemini-2.5-flash-lite"
+  "gemini-3-flash"
 ];
 let currentModelIndex = 0;
 
