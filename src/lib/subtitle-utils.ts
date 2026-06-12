@@ -4,24 +4,38 @@ export function parseSRT(content: string): SubtitleItem[] {
   const items: SubtitleItem[] = [];
   const blocks = content.trim().split(/\n\s*\n/);
 
-  blocks.forEach((block, index) => {
+  blocks.forEach((block, idx) => {
     const lines = block.split('\n').map(l => l.trim());
     if (lines.length >= 2) {
       // Find the line with the timestamp
       const timeLineIdx = lines.findIndex(l => l.includes(' --> '));
       if (timeLineIdx !== -1) {
+        // Try to get index from previous line
+        let itemIndex = idx + 1;
+        if (timeLineIdx > 0) {
+          const possibleIndex = parseInt(lines[timeLineIdx - 1]);
+          if (!isNaN(possibleIndex)) {
+            itemIndex = possibleIndex;
+          }
+        }
+
         const timeMatch = lines[timeLineIdx].match(/(\d{2}:\d{2}:\d{2}[,. ]\d{3}) --> (\d{2}:\d{2}:\d{2}[,. ]\d{3})/);
         if (timeMatch) {
-          const startTime = timeMatch[1].replace(',', '.');
-          const endTime = timeMatch[2].replace(',', '.');
+          const startTimeRaw = timeMatch[1];
+          const endTimeRaw = timeMatch[2];
+          
+          // Normalized versions for internal calculations
+          const startTimeNorm = startTimeRaw.replace(',', '.');
+          const endTimeNorm = endTimeRaw.replace(',', '.');
+          
           const text = lines.slice(timeLineIdx + 1).join('\n');
           items.push({
             id: crypto.randomUUID(),
-            index: index + 1,
-            startTime: startTime.replace('.', ','),
-            endTime: endTime.replace('.', ','),
-            startTimeSeconds: timeToSeconds(startTime),
-            endTimeSeconds: timeToSeconds(endTime),
+            index: itemIndex,
+            startTime: startTimeRaw,
+            endTime: endTimeRaw,
+            startTimeSeconds: timeToSeconds(startTimeNorm),
+            endTimeSeconds: timeToSeconds(endTimeNorm),
             text,
           });
         }
@@ -176,10 +190,10 @@ export function parseSubtitle(content: string, fileName: string): SubtitleItem[]
 
 export function stringifySRT(items: SubtitleItem[], useTranslation = false): string {
   return items
-    .map((item, idx) => {
+    .map((item) => {
       const text = useTranslation ? (item.translatedText || item.text) : item.text;
-      // Ensure index is progressive (1, 2, 3...) regardless of internal indices
-      return `${idx + 1}\n${item.startTime} --> ${item.endTime}\n${text}\n`;
+      // Use original item.index as requested
+      return `${item.index}\n${item.startTime} --> ${item.endTime}\n${text}\n`;
     })
     .join('\n');
 }

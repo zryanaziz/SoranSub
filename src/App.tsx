@@ -584,7 +584,10 @@ export default function App() {
               const failedIndices: number[] = [];
               results.forEach((translated, index) => {
                 const originalIdx = currentBatchIndices[index];
-                const originalText = updatedSubtitles[originalIdx].text.trim();
+                const originalItem = updatedSubtitles[originalIdx];
+                if (!originalItem) return;
+
+                const originalText = originalItem.text.trim();
                 const translatedText = translated.trim();
 
                 // Validation: If AI just echoed the English (and it's not a short numeric/symbolic string)
@@ -594,22 +597,26 @@ export default function App() {
                 if (isEcho) {
                   failedIndices.push(originalIdx);
                 } else {
-                  if (updatedSubtitles[originalIdx]) {
-                    updatedSubtitles[originalIdx].translatedText = stripFormatting(translated);
-                  }
+                  updatedSubtitles[originalIdx] = {
+                    ...originalItem,
+                    translatedText: stripFormatting(translated)
+                  };
                 }
               });
 
               // Double-Check: High-priority retry for any echoed blocks
               if (failedIndices.length > 0) {
                 const failedTexts = failedIndices.map(idx => updatedSubtitles[idx].text);
-                // Attempt one more time for these specific failures with a retry-specific handler if needed
-                // but jointTranslateRefineBatch with smaller batch usually fixes it
+                // Attempt one more time for these specific failures
                 const recovered = await jointTranslateRefineBatch(failedTexts);
                 recovered.forEach((text, index) => {
                   const originalIdx = failedIndices[index];
-                  if (updatedSubtitles[originalIdx]) {
-                    updatedSubtitles[originalIdx].translatedText = stripFormatting(text);
+                  const originalItem = updatedSubtitles[originalIdx];
+                  if (originalItem) {
+                    updatedSubtitles[originalIdx] = {
+                      ...originalItem,
+                      translatedText: stripFormatting(text)
+                    };
                   }
                 });
               }
