@@ -129,16 +129,20 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 8, delay = 2000): Pr
  */
 export async function translateToKurdishSorani(text: string): Promise<string> {
   return withRetry(async () => {
+    // Replace actual newlines with <br> to protect them from being stripped or altered
+    const cleanedText = text.replace(/\n/g, '<br>');
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: getCurrentModel(),
-      contents: [{ role: "user", parts: [{ text }] }],
+      contents: [{ role: "user", parts: [{ text: cleanedText }] }],
       config: {
         systemInstruction: SYSTEM_INSTRUCTION
       }
     });
 
-    return (response.text || text).replace(/\\n/g, '\n');
+    const translated = response.text || text;
+    // Restore <br> back to \n
+    return translated.replace(/<br\s*\/?>/gi, '\n');
   });
 }
 
@@ -147,10 +151,14 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
  * Consolidates translation and refinement into a single API call per batch.
  */
 export async function jointTranslateRefineBatch(texts: string[]): Promise<string[]> {
-  return withRetry(async () => {
+  // Pre-process: replace actual newlines with "<br>" placeholder to prevent Gemini from thinking
+  // they are separate list elements or lines to be split.
+  const cleanedTexts = texts.map(t => t.replace(/\n/g, '<br>'));
+
+  const runBatch = async (): Promise<string[]> => {
     const ai = getAI();
     const prompt = `You are a professional subtitle translator and editor specializing in Kurdish (Sorani).
-      Your task is to TRANSLATE and REFINE the following ${texts.length} English subtitle lines.
+      Your task is to TRANSLATE and REFINE the following ${cleanedTexts.length} English subtitle lines.
       
       CRITICAL RULES:
       1. TRANSLATE: Convert the English text into high-quality, natural Kurdish Sorani.
@@ -158,39 +166,64 @@ export async function jointTranslateRefineBatch(texts: string[]): Promise<string
       3. PUNCTUATION: DO NOT start a Kurdish Sorani sentence with a comma (,), ellipses (...), period (.), exclamation point (!), or question mark (?). These leading punctuations MUST be moved to the end of the sentence. Use Kurdish-specific punctuation where appropriate (؟ instead of ?, ، instead of ,).
       4. OUTPUT: Return a JSON array of strings ONLY.
       5. ORDER: Maintain the exact order of the provided English lines.
-      6. COUNT: You MUST return exactly ${texts.length} strings in the array.
-      7. NEWLINES: If an input string has a line break, the translation MUST also have a line break.
+      6. COUNT: You MUST return exactly ${cleanedTexts.length} strings in the array.
+      7. LINE BREAKS: The placeholder "<br>" represents a line break or newline. You MUST preserve "<br>" exactly in your translated output in the correct relative position. Do not replace it with an actual newline or translate/modify it. Keep it exactly as "<br>". Under no circumstances should you split an input line containing "<br>" into multiple separate elements in the output JSON array.
       8. ABBREVIATIONS: Transliterate English abbreviations (like CIA, FBI, AI, IT) into phonetic Kurdish Sorani characters based on how they are pronounced letters (e.g., 'FBI' → 'ئێف بی ئای', 'CIA' → 'سی ئای ئەی') instead of leaving them in English.
       9. DO NOT ECHO: Do not return the English text. If a line cannot be translated, provide the best possible transliteration or professional adaptation in Sorani Kurdish.
       
       INPUT ENGLISH LINES:
-      ${JSON.stringify(texts)}`;
+      ${JSON.stringify(cleanedTexts)}`;
 
     const response = await ai.models.generateContent({
       model: getCurrentModel(),
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
-        systemInstruction: "You are a professional Kurdish Sorani translator and editor. You translate English subtitles into natural, refined Kurdish Sorani. You always return the exact same number of lines as provided.",
+        systemInstruction: "You are a professional Kurdish Sorani translator and editor. You translate English subtitles into natural, refined Kurdish Sorani. You always return the exact same number of elements as the input array.",
         responseMimeType: "application/json",
         responseSchema: BATCH_SCHEMA,
       }
     });
 
     const result = extractJson(response.text || "[]");
-    if (Array.isArray(result) && result.length === texts.length) {
-      return result.map((s: any) => typeof s === 'string' ? s.replace(/\\n/g, '\n') : String(s));
-    }
-    
-    // If length mismatch, try to fix or throw so withRetry can catch it
-    if (Array.isArray(result) && result.length > 0) {
-       console.warn(`Batch length mismatch: expected ${texts.length}, got ${result.length}. Returning available results and padding with remaining.`);
-       const padded = [...result.slice(0, texts.length)];
-       while (padded.length < texts.length) {
-         padded.push(texts[padded.length]);
-       }
-       return padded.map(s => String(s));
+    if (Array.isArray(result) && result.length === cleanedTexts.length) {
+      return result.map((s: any) => {
+        const str = typeof s === 'string' ? s : String(s);
+        // Replace <br> back to \n
+        return str.replace(/<br\s*\/?>/gi, '\n');
+      });
     }
 
-    throw new Error(`AI failed to return valid translation batch. (Expected ${texts.length}, got ${result?.length ?? 'invalid'}). Falling back to retry.`);
-  });
+    throw new Error(`Batch length mismatch. Expected ${cleanedTexts.length}, got ${result?.length ?? 'non-array'}.`);
+  };
+
+  // Run with retry logic up to 3 times, rotating the model if there's an issue
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await withRetry(() => runBatch(), 2, 1000);
+    } catch (err) {
+      lastError = err;
+      console.warn(`Attempt ${attempt} of jointTranslateRefineBatch failed. Error: ${err}`);
+      if (attempt < 3) {
+        rotateModel();
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  }
+
+  // If 3 batch attempts failed, fall back to block-by-block translating
+  // to absolutely guarantee correctness and prevent any chance of timeline shifts!
+  console.warn("Batch translation failed after retries. Falling back to block-by-block translation as safe failsafe.");
+  
+  const results: string[] = [];
+  // Process block-by-block with a small degree of concurrency
+  const limit = 5;
+  for (let i = 0; i < texts.length; i += limit) {
+    const chunk = texts.slice(i, i + limit);
+    const chunkPromises = chunk.map(text => translateToKurdishSorani(text));
+    const chunkResults = await Promise.all(chunkPromises);
+    results.push(...chunkResults);
+  }
+
+  return results;
 }
