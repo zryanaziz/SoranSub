@@ -180,9 +180,8 @@ export default function App() {
   const handleCleanUpSubtitles = () => {
     if (subtitles.length === 0) return;
     
-    // Improved SDH removal: Brackets, parentheses, and speaker tags like "NAME: "
+    // Improved SDH removal: Brackets, parentheses
     const sdhRegex = /\[[^\]]*\]|\([^)]*\)|<[^>]*>|[♪♫\u266a\u266b]/gi;
-    const speakerRegex = /^[A-ZÀ-ÿ\s]+[:\-]\s+/gm;
     
     let tagCount = 0;
     const initialCount = subtitles.length;
@@ -234,9 +233,9 @@ export default function App() {
 
     // Step 1: Strip tags and swap symbols
     const step1 = subtitles.map(item => {
-      // Remove SDH markers and speaker names
-      let newText = item.text.replace(sdhRegex, '').replace(speakerRegex, '').replace(/[ \t]+/g, ' ').trim();
-      let newTranslated = item.translatedText ? item.translatedText.replace(sdhRegex, '').replace(speakerRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
+      // Remove SDH markers
+      let newText = item.text.replace(sdhRegex, '').replace(/[ \t]+/g, ' ').trim();
+      let newTranslated = item.translatedText ? item.translatedText.replace(sdhRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
       
       // Punctuation and cleaning logic
       newText = swapSymbols(newText);
