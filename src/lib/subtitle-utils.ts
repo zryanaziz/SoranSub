@@ -238,9 +238,15 @@ export function shiftSubtitles(items: SubtitleItem[], offsetSeconds: number): Su
 }
 
 export function stripFormatting(text: string): string {
+  if (!text) return "";
   // Removes HTML-like tags (e.g. <font color="...">, <i>, <b>)
   let cleanText = text.replace(/<[^>]*>/g, '');
   // Remove leading and trailing dots
   cleanText = cleanText.replace(/^\.+|\.+$/g, '');
+  // Normalize newlines: strip duplicate empty lines to prevent SRT block splitting
+  cleanText = cleanText.split('\n')
+                       .map(line => line.trim())
+                       .filter(line => line.length > 0)
+                       .join('\n');
   return cleanText;
 }

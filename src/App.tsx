@@ -198,7 +198,7 @@ export default function App() {
           .replace(/^[-–—.,!،؛\s]+|[-–—.,!،؛\s]+$/g, '') // Remove these symbols from start/end
           .replace(/^\.\.\.|\.\.\.$/g, '')             // Handle triple dots specifically
           .trim();
-      }).join('\n').trim();
+      }).filter(line => line.length > 0).join('\n').trim();
       if (!s) return "";
 
       // Detect if the string contains Kurdish/Arabic characters
@@ -345,14 +345,28 @@ export default function App() {
         return;
       }
 
-      // 2. Check for environment variables
+      // 2. Check for server-side environment variables via has-key endpoint
+      try {
+        const response = await fetch('/api/gemini/has-key');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.hasKey) {
+            setHasApiKey(true);
+            return;
+          }
+        }
+      } catch (e) {
+        console.error("Error calling /api/gemini/has-key:", e);
+      }
+
+      // 3. Check for environment variables
       const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && process.env?.API_KEY);
       if (envKey) {
         setHasApiKey(true);
         return;
       }
 
-      // 3. Check AI Studio platform key
+      // 4. Check AI Studio platform key
       if (window.aistudio?.hasSelectedApiKey) {
         try {
           const hasKey = await window.aistudio.hasSelectedApiKey();
@@ -557,8 +571,8 @@ export default function App() {
     setProgress(5);
     setShowFinishedMessage(false);
     
-    const batchSize = 100;
-    const concurrency = 5;
+    const batchSize = 50;
+    const concurrency = 2;
     const updatedSubtitles = [...subtitles];
     const totalSteps = indices.length;
     let completedSteps = 0;
@@ -575,17 +589,28 @@ export default function App() {
           
           const endIdx = Math.min(startIdx + batchSize, indices.length);
           const currentBatchIndices = indices.slice(startIdx, endIdx);
-          const textsToTranslate = currentBatchIndices.map(idx => subtitles[idx].text);
+          const itemsToTranslate = currentBatchIndices.map(idx => ({
+            id: subtitles[idx].index || (idx + 1),
+            text: subtitles[idx].text
+          }));
           
           batchPromises.push((async () => {
             try {
-              const results = await jointTranslateRefineBatch(textsToTranslate);
+              const results = await jointTranslateRefineBatch(itemsToTranslate);
+              
+              const resultsMap = new Map<number, string>();
+              results.forEach(res => {
+                resultsMap.set(res.id, res.translatedText);
+              });
               
               const failedIndices: number[] = [];
-              results.forEach((translated, index) => {
-                const originalIdx = currentBatchIndices[index];
+              currentBatchIndices.forEach(originalIdx => {
                 const originalItem = updatedSubtitles[originalIdx];
                 if (!originalItem) return;
+
+                const itemIndex = originalItem.index || (originalIdx + 1);
+                const translated = resultsMap.get(itemIndex);
+                if (!translated) return;
 
                 const originalText = originalItem.text.trim();
                 const translatedText = translated.trim();
@@ -606,17 +631,29 @@ export default function App() {
 
               // Double-Check: High-priority retry for any echoed blocks
               if (failedIndices.length > 0) {
-                const failedTexts = failedIndices.map(idx => updatedSubtitles[idx].text);
+                const failedItems = failedIndices.map(idx => ({
+                  id: updatedSubtitles[idx].index || (idx + 1),
+                  text: updatedSubtitles[idx].text
+                }));
                 // Attempt one more time for these specific failures
-                const recovered = await jointTranslateRefineBatch(failedTexts);
-                recovered.forEach((text, index) => {
-                  const originalIdx = failedIndices[index];
+                const recovered = await jointTranslateRefineBatch(failedItems);
+                
+                const recoveredMap = new Map<number, string>();
+                recovered.forEach(res => {
+                  recoveredMap.set(res.id, res.translatedText);
+                });
+
+                failedIndices.forEach(originalIdx => {
                   const originalItem = updatedSubtitles[originalIdx];
                   if (originalItem) {
-                    updatedSubtitles[originalIdx] = {
-                      ...originalItem,
-                      translatedText: stripFormatting(text)
-                    };
+                    const itemIndex = originalItem.index || (originalIdx + 1);
+                    const text = recoveredMap.get(itemIndex);
+                    if (text) {
+                      updatedSubtitles[originalIdx] = {
+                        ...originalItem,
+                        translatedText: stripFormatting(text)
+                      };
+                    }
                   }
                 });
               }
@@ -634,7 +671,7 @@ export default function App() {
         setProgress(Math.round((completedSteps / totalSteps) * 100));
         
         if (i + batchSize * concurrency < indices.length) {
-          await new Promise(resolve => setTimeout(resolve, 300));
+          await new Promise(resolve => setTimeout(resolve, 1500));
         }
       }
 
