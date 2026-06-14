@@ -202,6 +202,10 @@ async function startServer() {
         return res.status(400).json({ error: "Missing text to translate" });
       }
 
+      if (String(text).trim() === '') {
+        return res.json({ translatedText: text });
+      }
+
       const cleanedText = text.replace(/\n/g, '<br>');
       const result = await callGeminiWithModelFallback(apiKey, async (ai, modelName) => {
         const response = await ai.models.generateContent({
@@ -231,9 +235,21 @@ async function startServer() {
         return res.status(400).json({ error: "Missing or invalid items array" });
       }
 
+      const emptyItems = items.filter((item: any) => String(item.text).trim() === '');
+      const activeItems = items.filter((item: any) => String(item.text).trim() !== '');
+
+      const emptyResults = emptyItems.map((item: any) => ({
+        id: Number(item.id),
+        translatedText: String(item.text)
+      }));
+
+      if (activeItems.length === 0) {
+        return res.json({ results: emptyResults });
+      }
+
       // Pre-process: replace actual newlines with "<br>" placeholder to prevent Gemini from thinking
       // they are separate list elements, lines to be split, or throwing off the JSON schema structures.
-      const cleanedItems = items.map((item: any) => ({
+      const cleanedItems = activeItems.map((item: any) => ({
         id: Number(item.id),
         text: String(item.text).replace(/\n/g, '<br>')
       }));
@@ -285,7 +301,7 @@ async function startServer() {
         throw new Error(`Batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
       });
 
-      res.json({ results });
+      res.json({ results: [...emptyResults, ...results] });
     } catch (error: any) {
       console.error("Batch translation API error:", error);
       res.status(500).json({ error: error.message || "Batch translation failed" });

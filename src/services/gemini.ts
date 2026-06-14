@@ -181,6 +181,9 @@ async function clientSideTranslateRefineBatch(
  * Single block translation - proxies through secure local server with client-side fallback
  */
 export async function translateToKurdishSorani(text: string): Promise<string> {
+  if (text.trim() === '') {
+    return text;
+  }
   const apiKey = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
   
   try {
@@ -225,6 +228,15 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
 export async function jointTranslateRefineBatch(
   itemsToTranslate: { id: number; text: string }[]
 ): Promise<{ id: number; translatedText: string }[]> {
+  const emptyItems = itemsToTranslate.filter(item => item.text.trim() === '');
+  const activeItems = itemsToTranslate.filter(item => item.text.trim() !== '');
+
+  const emptyResults = emptyItems.map(item => ({ id: item.id, translatedText: item.text }));
+
+  if (activeItems.length === 0) {
+    return emptyResults;
+  }
+
   const apiKey = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
 
   try {
@@ -233,7 +245,7 @@ export async function jointTranslateRefineBatch(
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ items: itemsToTranslate, apiKey })
+      body: JSON.stringify({ items: activeItems, apiKey })
     });
 
     if (response.status === 404) {
@@ -241,7 +253,8 @@ export async function jointTranslateRefineBatch(
       if (!apiKey) {
         throw new Error("No backend server found (Vercel/Static host detected) and no manual Gemini API Key entered. Please set your Gemini API Key in the UI settings (bottom-left).");
       }
-      return await clientSideTranslateRefineBatch(itemsToTranslate, apiKey);
+      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey);
+      return [...emptyResults, ...activeResults];
     }
 
     if (!response.ok) {
@@ -250,14 +263,15 @@ export async function jointTranslateRefineBatch(
     }
 
     const data = await response.json();
-    return data.results;
+    return [...emptyResults, ...data.results];
   } catch (error: any) {
     if (error.message?.includes('Failed to fetch') || error.message?.includes('fetch failed') || error.message?.includes('NetworkError')) {
       console.warn("[Static Fallback] Server unreachable. Running direct browser batch localization.");
       if (!apiKey) {
         throw new Error("Backend server is unreachable and no manual API Key is provided. Please set your Gemini API Key in the UI settings (bottom-left).");
       }
-      return await clientSideTranslateRefineBatch(itemsToTranslate, apiKey);
+      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey);
+      return [...emptyResults, ...activeResults];
     }
     throw error;
   }

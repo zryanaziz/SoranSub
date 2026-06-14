@@ -610,7 +610,7 @@ export default function App() {
 
                 const itemIndex = originalItem.index || (originalIdx + 1);
                 const translated = resultsMap.get(itemIndex);
-                if (!translated) return;
+                if (translated === undefined) return;
 
                 const originalText = originalItem.text.trim();
                 const translatedText = translated.trim();
@@ -624,7 +624,7 @@ export default function App() {
                 } else {
                   updatedSubtitles[originalIdx] = {
                     ...originalItem,
-                    translatedText: stripFormatting(translated)
+                    translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(translated)
                   };
                 }
               });
@@ -648,10 +648,10 @@ export default function App() {
                   if (originalItem) {
                     const itemIndex = originalItem.index || (originalIdx + 1);
                     const text = recoveredMap.get(itemIndex);
-                    if (text) {
+                    if (text !== undefined) {
                       updatedSubtitles[originalIdx] = {
                         ...originalItem,
-                        translatedText: stripFormatting(text)
+                        translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(text)
                       };
                     }
                   }
