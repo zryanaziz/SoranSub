@@ -121,42 +121,32 @@ async function clientSideTranslate(text: string, apiKey: string): Promise<string
  */
 async function clientSideTranslateRefineBatch(
   items: { id: number; text: string }[],
-  apiKey: string
+  apiKey: string,
+  shouldRefine: boolean = true
 ): Promise<{ id: number; translatedText: string }[]> {
   const cleanedItems = items.map((item) => ({
     id: Number(item.id),
     text: String(item.text).replace(/\n/g, '<br>')
   }));
 
-  return await callClientGeminiWithModelFallback(apiKey, async (aiInstance, modelName) => {
-    const prompt = `You are a native Sorani Kurdish subtitle localization and translation specialist.
-      Your task is to TRANSLATE and REFINE the following ${cleanedItems.length} English subtitle objects into highly natural, idiomatic, and flowing Sorani Kurdish (Central Kurdish).
+  // PASS 1: Translation
+  const pass1Results = await callClientGeminiWithModelFallback(apiKey, async (aiInstance, modelName) => {
+    const translatePrompt = `You are a native Sorani Kurdish subtitle translator.
+      Your task is to TRANSLATE the following ${cleanedItems.length} English subtitle objects into Kurdish Sorani (Central Kurdish).
 
-      SERIOUS LOCIALIZATION CRITERIA:
-      1. RESTREET WORD ORDER (SOV): English is Subject-Verb-Object (SVO), while Kurdish Sorani is Subject-Object-Verb (SOV). Completely restructure each sentence so verbs are appropriately inflated and placed at the end of the clause or sentence. Stiff SVO translations are unacceptable.
-      2. NATURAL CONVERSATIONAL SPEECH (NO LITERALISM): Convert English expressions, slangs, and daily phrases into native, warm, and natural conversational Kurdish phrasing as used in top-tier cinema translations. Examples:
-         - 'Are you kidding me?' -> 'تۆ گاڵتەم لەگەڵ دەکەیت؟' is robotic. Use 'شۆخی دەکەیت؟' or 'پێدەکەنی؟' or 'یاری دەکەیت؟'
-         - 'Don't worry' -> 'نیگەران مەبە' or 'سووک بگرە بۆت' or 'خەمت نەبێت'
-         - 'Shut up!' -> 'بێدەنگ بە!' or 'دەمت داخە!'
-         - 'Oh, boy!' -> 'یاخوا!' or 'ئەی هاوار!'
-      3. COMPACT SUBTITLE ECONOMY: Keep translations highly concise, natural, and memorable. Subtitle lines must not be too long; omit unnecessary words that don't add to the emotional or factual meaning.
-      4. RIGHT-TO-LEFT PUNCTUATION: The language is RTL. Ensure all sentence punctuation (e.g. Kurdish ؟, ،, ؛) is placed strictly at the end of the Sorani text sequence. Under no circumstances should any character like ellipsis (...), comma (،), period (.), or exclamation point (!) appear as a leading token (on the right-side starting point when rendering).
-      5. NO ENGLISH ABBREVIATIONS: Smoothly transliterate English names/acronyms to phonetic Kurdish characters:
-         - 'FBI' -> 'ئێف بی ئای'
-         - 'CIA' -> 'سی ئای ئەی'
-         - 'TV' -> 'تی ڤی'
-         - 'IT' -> 'ئای تی'
-      6. ID CORRESPONDENCE (STRICT MANDATE): You MUST return exactly the same number of objects layout. Each output item must correspond to the correct 'id' input item.
-      7. LINE BREAK RETENTION: The tag "<br>" acts as an inside newline. Keep "<br>" exactly where it belongs in the relative flow of the translated text. Do not replace it with normal newline; keep the spelling "<br>" intact.
+      CRITICAL RULES:
+      1. Under no circumstances should you echo the English text in 'translatedText'.
+      2. Translate every item fully and faithfully into Kurdish script.
+      3. Keep '<br>' tags exactly intact. Do not delete them.
 
       INPUT SUBTITLE ITEMS:
       ${JSON.stringify(cleanedItems)}`;
 
     const response = await aiInstance.models.generateContent({
       model: modelName,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      contents: [{ role: "user", parts: [{ text: translatePrompt }] }],
       config: {
-        systemInstruction: BATCH_SYSTEM_INSTRUCTION,
+        systemInstruction: "You are a professional, senior Kurdish Sorani translator. Translate the input JSON array of objects with 'id' and 'text' into Kurdish Sorani, returning a JSON array of objects with 'id' and 'translatedText'. DO NOT echo the English.",
         responseMimeType: "application/json",
         responseSchema: BATCH_SCHEMA,
       }
@@ -166,14 +156,75 @@ async function clientSideTranslateRefineBatch(
     if (Array.isArray(result) && result.length === cleanedItems.length) {
       return result.map((item: any) => ({
         id: Number(item.id),
-        translatedText: typeof item.translatedText === 'string' 
-          ? item.translatedText.replace(/<br\s*\/?>/gi, '\n') 
-          : String(item.translatedText).replace(/<br\s*\/?>/gi, '\n')
+        translatedText: typeof item.translatedText === 'string' ? item.translatedText : String(item.translatedText)
       }));
     }
-
-    throw new Error(`Batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
+    throw new Error(`Pass 1 Translation batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
   });
+
+  // If refinement is disabled, return Pass 1 results directly
+  if (!shouldRefine) {
+    return pass1Results.map((item: any) => ({
+      id: Number(item.id),
+      translatedText: item.translatedText.replace(/<br\s*\/?>/gi, '\n')
+    }));
+  }
+
+  // Prepare items for Pass 2 (Refinement)
+  const itemsForRefinement = cleanedItems.map((item) => {
+    const translatedObj = pass1Results.find((r: any) => Number(r.id) === Number(item.id));
+    return {
+      id: Number(item.id),
+      originalText: item.text,
+      translatedKurdish: translatedObj ? translatedObj.translatedText : ""
+    };
+  });
+
+  // PASS 2: Refinement
+  try {
+    return await callClientGeminiWithModelFallback(apiKey, async (aiInstance, modelName) => {
+      const refinePrompt = `You are a native Kurdish Sorani subtitle localization and refinement specialist.
+        Your task is to review and edit the translated Kurdish subtitles to make them highly natural, idiomatic, flowing, and professional.
+
+        STANDARDS FOR PERFECT REFINEMENT:
+        1. RESTRUCTURE TO SOV WORD ORDER: Ensure that every sentence is structured with the verb at the very end of the clause or sentence. Correct any SVO structures carried over from English.
+        2. NATURAL SPEAKING TONE: Replace any robotic, literal, or word-for-word translations with fluent, native conversational expressions.
+        3. RTL PUNCTUATION ALIGNMENT: Kurdish writing is RTL. Make sure Kurdish question marks (؟), commas (،), and semicolons (؛) are strictly placed at the very end of the Sorani text sequence. No punctuation should reside on the right-side start of a line.
+        4. SUBTITLE CONCISENESS: Keep the text concise and clean.
+        5. LINE BREAKS: Maintain original '<br>' tag placements.
+        6. RECOVERY: If any item is still in English or echoed, you MUST provide a high-quality finished translation to Kurdish Sorani. No English text is allowed in the output.
+
+        ITEMS FOR SUBTITLE REFINEMENT AND RESTRUCTURING:
+        ${JSON.stringify(itemsForRefinement)}`;
+
+      const response = await aiInstance.models.generateContent({
+        model: modelName,
+        contents: [{ role: "user", parts: [{ text: refinePrompt }] }],
+        config: {
+          systemInstruction: "You are a native Kurdish Sorani subtitle editor. Review 'originalText' and 'translatedKurdish' then output the refined and polished Kurdish translation under 'translatedText'. Output MUST be JSON array of objects with 'id' and 'translatedText'.",
+          responseMimeType: "application/json",
+          responseSchema: BATCH_SCHEMA,
+        }
+      });
+
+      const result = extractJson(response.text || "[]");
+      if (Array.isArray(result) && result.length === cleanedItems.length) {
+        return result.map((item: any) => ({
+          id: Number(item.id),
+          translatedText: typeof item.translatedText === 'string' 
+            ? item.translatedText.replace(/<br\s*\/?>/gi, '\n') 
+            : String(item.translatedText).replace(/<br\s*\/?>/gi, '\n')
+        }));
+      }
+      throw new Error(`Pass 2 Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
+    });
+  } catch (refineError) {
+    console.warn("[Refinement Pass Bypassed] Client-side refinement failed, falling back to raw translated results:", refineError);
+    return pass1Results.map((item: any) => ({
+      id: Number(item.id),
+      translatedText: item.translatedText.replace(/<br\s*\/?>/gi, '\n')
+    }));
+  }
 }
 
 /**
@@ -238,7 +289,8 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
  * Joint Translation & Refinement (Joint 1-Pass) - proxies through secure local server with client-side fallback
  */
 export async function jointTranslateRefineBatch(
-  itemsToTranslate: { id: number; text: string }[]
+  itemsToTranslate: { id: number; text: string }[],
+  shouldRefine: boolean = true
 ): Promise<{ id: number; translatedText: string }[]> {
   const emptyItems = itemsToTranslate.filter(item => item.text.trim() === '');
   const activeItems = itemsToTranslate.filter(item => item.text.trim() !== '');
@@ -257,7 +309,7 @@ export async function jointTranslateRefineBatch(
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ items: activeItems, apiKey })
+      body: JSON.stringify({ items: activeItems, apiKey, shouldRefine })
     });
 
     const contentType = response.headers.get('content-type') || '';
@@ -267,7 +319,7 @@ export async function jointTranslateRefineBatch(
       if (!apiKey) {
         throw new Error("No backend server found (or server returned HTML) and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
-      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey);
+      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, shouldRefine);
       return [...emptyResults, ...activeResults];
     }
 
@@ -285,14 +337,14 @@ export async function jointTranslateRefineBatch(
       if (!apiKey) {
         throw new Error("Server returned non-JSON response and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
-      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey);
+      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, shouldRefine);
       return [...emptyResults, ...activeResults];
     }
   } catch (error: any) {
     console.warn("[Batch Exception Handled] Falling back to direct browser batch localization:", error);
     if (apiKey) {
       try {
-        const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey);
+        const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, shouldRefine);
         return [...emptyResults, ...activeResults];
       } catch (innerErr: any) {
         throw new Error(`Direct client batch translation failed: ${innerErr.message || innerErr}`);

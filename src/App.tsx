@@ -63,6 +63,12 @@ export default function App() {
   const [syncOffset, setSyncOffset] = useState('0');
   const [selectedAction, setSelectedAction] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isDoublePassEnabled, setIsDoublePassEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('isDoublePassEnabled') !== 'false';
+    }
+    return true;
+  });
   
   // MKV specific state
   const [mkvFile, setMkvFile] = useState<File | null>(null);
@@ -301,7 +307,7 @@ export default function App() {
       indices.push(i);
     }
 
-    handleProcessSubtitles(indices, true);
+    handleProcessSubtitles(indices, isDoublePassEnabled);
     setShowRangeModal(false);
   };
   
@@ -572,14 +578,14 @@ export default function App() {
     setShowFinishedMessage(false);
     
     const batchSize = 100;
-    const concurrency = 5;
+    const concurrency = shouldRefine ? 3 : 4;
     const updatedSubtitles = [...subtitles];
     const totalSteps = indices.length;
     let completedSteps = 0;
     
     try {
       // Joint 1-Pass: Translate & Refine in one go
-      setStatus({ type: 'info', message: 'Translating & Refining (Joint 1-Pass)...' });
+      setStatus({ type: 'info', message: shouldRefine ? 'Translating & Refining (Joint 1-Pass)...' : 'Translating (Single-Pass)...' });
       for (let i = 0; i < indices.length; i += batchSize * concurrency) {
         const batchPromises = [];
         
@@ -596,7 +602,7 @@ export default function App() {
           
           batchPromises.push((async () => {
             try {
-              const results = await jointTranslateRefineBatch(itemsToTranslate);
+              const results = await jointTranslateRefineBatch(itemsToTranslate, shouldRefine);
               
               const resultsMap = new Map<number, string>();
               results.forEach(res => {
@@ -638,7 +644,7 @@ export default function App() {
                 }));
                 
                 try {
-                  const recovered = await jointTranslateRefineBatch(failedItems);
+                  const recovered = await jointTranslateRefineBatch(failedItems, shouldRefine);
                   
                   const recoveredMap = new Map<number, string>();
                   recovered.forEach(res => {
@@ -751,7 +757,7 @@ export default function App() {
 
   const handleTranslateAll = () => {
     const indices = Array.from({ length: subtitles.length }, (_, i) => i);
-    handleProcessSubtitles(indices, true);
+    handleProcessSubtitles(indices, isDoublePassEnabled);
   };
   
   const handleReTranslateBlock = async () => {
@@ -986,6 +992,29 @@ export default function App() {
                   <span className="opacity-60">{getCurrentModel()}</span>
                   <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                 </div>
+                <button
+                  onClick={() => {
+                    const nextVal = !isDoublePassEnabled;
+                    setIsDoublePassEnabled(nextVal);
+                    localStorage.setItem('isDoublePassEnabled', String(nextVal));
+                    setStatus({ 
+                      type: 'info', 
+                      message: nextVal 
+                        ? 'Localization Mode: Deep 2-Pass (Translation + Polish Refinement)' 
+                        : 'Localization Mode: Fast 1-Pass (Translation Only - saves 50% API calls)' 
+                    });
+                  }}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2 py-0.5 border rounded-sm text-[8px] md:text-[10px] font-mono uppercase tracking-widest transition-all cursor-pointer",
+                    isDoublePassEnabled 
+                      ? "bg-[#141414] text-[#E4E3E0] border-[#141414]" 
+                      : "bg-[#141414]/5 border-[#141414]/10 hover:bg-[#141414] hover:text-[#E4E3E0]"
+                  )}
+                  title={isDoublePassEnabled ? "Deep pipeline active (Double API calls). Click to use Single-Pass." : "Single-pass active (Saves 50% Quota). Click to use Double-Pass."}
+                >
+                  <span className="opacity-60">Pipeline:</span>
+                  <span className="font-bold">{isDoublePassEnabled ? "Deep 2-Pass" : "Fast 1-Pass"}</span>
+                </button>
               </div>
 
             </div>
