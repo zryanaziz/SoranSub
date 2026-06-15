@@ -571,7 +571,7 @@ export default function App() {
     setProgress(5);
     setShowFinishedMessage(false);
     
-    const batchSize = 50;
+    const batchSize = 100;
     const concurrency = 5;
     const updatedSubtitles = [...subtitles];
     const totalSteps = indices.length;
@@ -615,9 +615,10 @@ export default function App() {
                 const originalText = originalItem.text.trim();
                 const translatedText = translated.trim();
 
-                // Validation: If AI just echoed the English (and it's not a short numeric/symbolic string)
-                // we mark it as failed and retry.
-                const isEcho = originalText.length > 2 && originalText.toLowerCase() === translatedText.toLowerCase();
+                const hasKurdish = /[\u0600-\u06FF]/.test(translatedText);
+                const hasLatinOriginal = /[a-zA-Z]/.test(originalText);
+                const isEcho = (originalText.length > 2 && originalText.toLowerCase() === translatedText.toLowerCase()) ||
+                               (hasLatinOriginal && !hasKurdish && translatedText.replace(/[^a-zA-Z]/g, '').length > 0);
 
                 if (isEcho) {
                   failedIndices.push(originalIdx);
@@ -635,27 +636,83 @@ export default function App() {
                   id: updatedSubtitles[idx].index || (idx + 1),
                   text: updatedSubtitles[idx].text
                 }));
-                // Attempt one more time for these specific failures
-                const recovered = await jointTranslateRefineBatch(failedItems);
                 
-                const recoveredMap = new Map<number, string>();
-                recovered.forEach(res => {
-                  recoveredMap.set(res.id, res.translatedText);
-                });
+                try {
+                  const recovered = await jointTranslateRefineBatch(failedItems);
+                  
+                  const recoveredMap = new Map<number, string>();
+                  recovered.forEach(res => {
+                    recoveredMap.set(res.id, res.translatedText);
+                  });
 
-                failedIndices.forEach(originalIdx => {
-                  const originalItem = updatedSubtitles[originalIdx];
-                  if (originalItem) {
+                  const remainingFailedIndices: number[] = [];
+
+                  failedIndices.forEach(originalIdx => {
+                    const originalItem = updatedSubtitles[originalIdx];
+                    if (!originalItem) return;
+
                     const itemIndex = originalItem.index || (originalIdx + 1);
                     const text = recoveredMap.get(itemIndex);
                     if (text !== undefined) {
-                      updatedSubtitles[originalIdx] = {
-                        ...originalItem,
-                        translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(text)
-                      };
+                      const originalText = originalItem.text.trim();
+                      const translatedText = text.trim();
+                      
+                      const hasKurdishChar = /[\u0600-\u06FF]/.test(translatedText);
+                      const hasLatin = /[a-zA-Z]/.test(originalText);
+                      const isStillEcho = (originalText.length > 2 && originalText.toLowerCase() === translatedText.toLowerCase()) ||
+                                          (hasLatin && !hasKurdishChar && translatedText.replace(/[^a-zA-Z]/g, '').length > 0);
+
+                      if (isStillEcho) {
+                        remainingFailedIndices.push(originalIdx);
+                      } else {
+                        updatedSubtitles[originalIdx] = {
+                          ...originalItem,
+                          translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(text)
+                        };
+                      }
+                    } else {
+                      remainingFailedIndices.push(originalIdx);
                     }
+                  });
+
+                  // Final Fallback: Single-block direct retry for any persistent failures
+                  if (remainingFailedIndices.length > 0) {
+                    await Promise.all(
+                      remainingFailedIndices.map(async (originalIdx) => {
+                        const originalItem = updatedSubtitles[originalIdx];
+                        if (originalItem) {
+                          try {
+                            const singleResult = await translateToKurdishSorani(originalItem.text);
+                            updatedSubtitles[originalIdx] = {
+                              ...originalItem,
+                              translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(singleResult)
+                            };
+                          } catch (singleErr) {
+                            console.error(`Final single-block fallback failed for index ${originalIdx}:`, singleErr);
+                          }
+                        }
+                      })
+                    );
                   }
-                });
+                } catch (retryErr) {
+                  console.error("Batch retry failed, falling back to single-block translation for all failures:", retryErr);
+                  await Promise.all(
+                    failedIndices.map(async (originalIdx) => {
+                      const originalItem = updatedSubtitles[originalIdx];
+                      if (originalItem) {
+                        try {
+                          const singleResult = await translateToKurdishSorani(originalItem.text);
+                          updatedSubtitles[originalIdx] = {
+                            ...originalItem,
+                            translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(singleResult)
+                          };
+                        } catch (singleErr) {
+                          console.error(`Final single-block fallback failed for index ${originalIdx}:`, singleErr);
+                        }
+                      }
+                    })
+                  );
+                }
               }
 
             } catch (err: any) {

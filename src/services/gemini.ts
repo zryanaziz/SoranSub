@@ -2,12 +2,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator and subtitle localization expert. Your absolute priority is to translate the input text into highly natural, idiomatic, flowing, and professional Sorani Kurdish as spoken in daily life, avoiding stiff, robotic, or literal word-for-word translations.\n\nCRITICAL Kurdish Sorani Localization Rules:\n1. GRAMMAR & WORD ORDER: Sorani Kurdish is strictly a Subject-Object-Verb (SOV) language. Restructure English sentences completely so that the verb is naturally placed at the end of the sentence or clause. Never keep English SVO structure.\n2. NATURAL IDIOMATIC PHRASING (NO LITERALISM): Convert English colloquialisms and idioms into their closest cultural equivalents in natural Sorani Kurdish. For example:\n   - 'Are you kidding me?' -> 'شۆخی دەکەیت؟' or 'گاڵتە دەکەیت؟' (NEVER 'ئایا تۆ لەگەڵ مندا گاڵتە دەکەیت؟')\n   - 'What's up?' -> 'چی هەیە؟' or 'بارودۆخ چۆنە؟'\n   - 'Oh my God!' -> 'خوایە گیان!' or 'ئەی خوایە!'\n   - 'Don't worry' -> 'نیگەران مەبە' or 'خەمت نەبێت'\n   - 'Shut up!' -> 'بێدەنگ بە!' or 'دەمت داخە!'\n   - 'Come on!' -> 'دەی!' or 'خێراکە!'\n3. PUNCTUATION FORMATTING: Sorani is written Right-to-Left (RTL). Kurdish-specific punctuation MUST be used (e.g., '؟' for question mark, '،' for comma, ';' or '؛' for semicolon). Under no circumstances should any line begin with a leading punctuation mark (such as a comma, period, exclamation mark, colon, or question mark). If punctuation is present, place it strictly at the end of the Sorani text.\n4. ABBREVIATIONS: Smoothly transliterate English abbreviations (e.g., CIA, FBI, NASA, IT, AI) into phonetic Kurdish characters based on their spoken pronunciation (e.g., 'FBI' -> 'ئێف بی ئای', 'CIA' -> 'سی ئای ئەی', 'AI' -> 'ئەی ئای', 'TV' -> 'تی ڤی') instead of leaving them in English.\n5. SUBTITLE CONCISENESS: Subtitles need to be brief and easy to read in a short timeframe. Keep translation punchy, concise, and natural, keeping screen space and display speed in mind.\n6. LINE BREAKS: The '<br>' tag is a placeholder for a line break or newline. You MUST preserve '<br>' exactly in the output, properly integrated into the natural flow of the translated sentence. Do NOT delete or translate '<br>'.\n7. OUTPUT ONLY: Return ONLY the translated Sorani Kurdish text, completely clean of explanations, note prefixes, or quotes.";
 
+const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
+
 const MODELS = [
-  "gemini-3.5-flash",
-  "gemini-2.5-flash",
-  "gemini-3-flash",
   "gemini-3.1-flash-lite",
-  "gemini-2.5-flash-lite"
+  "gemini-3.5-flash"
 ];
 let currentModelIndex = 0;
 
@@ -157,7 +156,7 @@ async function clientSideTranslateRefineBatch(
       model: modelName,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
-        systemInstruction: "You are a professional Kurdish Sorani translator and editor. You translate English subtitles into natural, refined Kurdish Sorani. You must return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.",
+        systemInstruction: BATCH_SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: BATCH_SCHEMA,
       }
@@ -195,10 +194,12 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
       body: JSON.stringify({ text, apiKey })
     });
 
-    if (response.status === 404) {
-      console.warn("[Vercel/Static Fallback] Server translate-endpoint returned 404. Using direct browser translator.");
+    const contentType = response.headers.get('content-type') || '';
+
+    if (response.status === 404 || contentType.includes('text/html')) {
+      console.warn("[SPA/Redirect Fallback] Server single translate-endpoint returned 404 or HTML. Using direct browser translator.");
       if (!apiKey) {
-        throw new Error("No backend server found (Vercel/Static host detected) and no manual Gemini API Key entered. Please set your Gemini API Key in the UI settings (bottom-left) to translate directly.");
+        throw new Error("No backend server found (or server returned HTML) and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
       return await clientSideTranslate(text, apiKey);
     }
@@ -208,16 +209,27 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
       throw new Error(errorData.error || `Translation failed with status ${response.status}`);
     }
 
-    const data = await response.json();
-    return data.translatedText;
-  } catch (error: any) {
-    if (error.message?.includes('Failed to fetch') || error.message?.includes('fetch failed') || error.message?.includes('NetworkError')) {
-      console.warn("[Static Fallback] Server unreachable. Executing translation directly client-side.");
+    const responseText = await response.text();
+    try {
+      const data = JSON.parse(responseText);
+      return data.translatedText;
+    } catch {
+      console.warn("[Parse Fallback] Server response was not valid JSON. Using direct browser translator.");
       if (!apiKey) {
-        throw new Error("Backend server is unreachable and no manual API Key is provided. Please set your Gemini API Key in the UI settings (bottom-left).");
+        throw new Error("Server returned non-JSON response and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
       return await clientSideTranslate(text, apiKey);
     }
+  } catch (error: any) {
+    console.warn("[Translate Exception Handled] Falling back to browser-side direct translation:", error);
+    if (apiKey) {
+      try {
+        return await clientSideTranslate(text, apiKey);
+      } catch (innerErr: any) {
+        throw new Error(`Direct client translation failed: ${innerErr.message || innerErr}`);
+      }
+    }
+    // If no manual API key, then throw the original exception so the user is guided/notified
     throw error;
   }
 }
@@ -248,10 +260,12 @@ export async function jointTranslateRefineBatch(
       body: JSON.stringify({ items: activeItems, apiKey })
     });
 
-    if (response.status === 404) {
-      console.warn("[Vercel/Static Fallback] Server batch endpoint returned 404. Running direct browser batch localization.");
+    const contentType = response.headers.get('content-type') || '';
+
+    if (response.status === 404 || contentType.includes('text/html')) {
+      console.warn("[SPA/Redirect Fallback] Server batch endpoint returned 404 or HTML. Running direct browser batch localization.");
       if (!apiKey) {
-        throw new Error("No backend server found (Vercel/Static host detected) and no manual Gemini API Key entered. Please set your Gemini API Key in the UI settings (bottom-left).");
+        throw new Error("No backend server found (or server returned HTML) and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
       const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey);
       return [...emptyResults, ...activeResults];
@@ -262,17 +276,29 @@ export async function jointTranslateRefineBatch(
       throw new Error(errorData.error || `Batch translation failed with status ${response.status}`);
     }
 
-    const data = await response.json();
-    return [...emptyResults, ...data.results];
-  } catch (error: any) {
-    if (error.message?.includes('Failed to fetch') || error.message?.includes('fetch failed') || error.message?.includes('NetworkError')) {
-      console.warn("[Static Fallback] Server unreachable. Running direct browser batch localization.");
+    const responseText = await response.text();
+    try {
+      const data = JSON.parse(responseText);
+      return [...emptyResults, ...data.results];
+    } catch {
+      console.warn("[Parse Fallback] Server batch response was not valid JSON. Running direct browser batch localization.");
       if (!apiKey) {
-        throw new Error("Backend server is unreachable and no manual API Key is provided. Please set your Gemini API Key in the UI settings (bottom-left).");
+        throw new Error("Server returned non-JSON response and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
       const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey);
       return [...emptyResults, ...activeResults];
     }
+  } catch (error: any) {
+    console.warn("[Batch Exception Handled] Falling back to direct browser batch localization:", error);
+    if (apiKey) {
+      try {
+        const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey);
+        return [...emptyResults, ...activeResults];
+      } catch (innerErr: any) {
+        throw new Error(`Direct client batch translation failed: ${innerErr.message || innerErr}`);
+      }
+    }
+    // If no manual API key, then throw the original exception so the user is guided/notified
     throw error;
   }
 }
