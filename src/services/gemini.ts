@@ -186,13 +186,14 @@ async function clientSideTranslateRefineBatch(
       const refinePrompt = `You are a native Kurdish Sorani subtitle localization and refinement specialist.
         Your task is to review and edit the translated Kurdish subtitles to make them highly natural, idiomatic, flowing, and professional.
 
-        STANDARDS FOR PERFECT REFINEMENT:
-        1. RESTRUCTURE TO SOV WORD ORDER: Ensure that every sentence is structured with the verb at the very end of the clause or sentence. Correct any SVO structures carried over from English.
-        2. NATURAL SPEAKING TONE: Replace any robotic, literal, or word-for-word translations with fluent, native conversational expressions.
-        3. RTL PUNCTUATION ALIGNMENT: Kurdish writing is RTL. Make sure Kurdish question marks (؟), commas (،), and semicolons (؛) are strictly placed at the very end of the Sorani text sequence. No punctuation should reside on the right-side start of a line.
-        4. SUBTITLE CONCISENESS: Keep the text concise and clean.
-        5. LINE BREAKS: Maintain original '<br>' tag placements.
-        6. RECOVERY: If any item is still in English or echoed, you MUST provide a high-quality finished translation to Kurdish Sorani. No English text is allowed in the output.
+        PROFESSIONAL SUBTITLE REFINEMENT GUIDELINES:
+        1. LINGUISTIC PRECISION (SOV): English is Subject-Verb-Object (SVO), while Kurdish Sorani is Subject-Object-Verb (SOV). You MUST completely restructure all sentences to place the verb appropriately at the end. DO NOT allow SVO remnants.
+        2. NATIVE IDIOMATIC FLOW: Discard all literal, word-for-word, or "translated-sounding" phrasing. Replace with authentic, natural conversational Kurdish used in high-quality media. If an English idiom lacks a direct counterpart, capture the underlying meaning using appropriate Kurdish imagery/idioms.
+        3. REGISTER ADAPTATION: Adapt the tone based on the context implied by the source text (e.g., formal dialogue should be rendered formally; casual slang should be rendered with modern conversational equivalents).
+        4. RTL & PUNCTUATION INTEGRITY: This is a strict RTL language. Ensure all sentence punctuation (؟, ،, ؛) is correctly positioned at the absolute end of the Kurdish text sequence. No punctuation mark can appear on the right-side start of a rendered line.
+        5. SUBTITLE ECONOMY: Maintain brevity without sacrificing meaning. Ensure maximum readability for viewers within the duration of the subtitle display.
+        6. FORMATTING: Preserve all '<br>' tags exactly as positioned. Never translate or paraphrase these tags.
+        7. ZERO ENGLISH TOLERANCE: Ensure total translation. If an original line was untranslatable in Pass 1, you MUST provide a professional, highly localized, or contextualized translation in Pass 2.
 
         ITEMS FOR SUBTITLE REFINEMENT AND RESTRUCTURING:
         ${JSON.stringify(itemsForRefinement)}`;
