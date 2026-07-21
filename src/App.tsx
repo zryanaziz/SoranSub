@@ -310,6 +310,33 @@ export default function App() {
     handleProcessSubtitles(indices, isDoublePassEnabled);
     setShowRangeModal(false);
   };
+
+  const handleCopyOriginalToTranslatedRange = () => {
+    const from = parseInt(rangeFrom);
+    const to = parseInt(rangeTo || subtitles.length.toString());
+    
+    if (isNaN(from) || isNaN(to) || from < 1 || to > subtitles.length || from > to) {
+      setStatus({ type: 'error', message: 'Invalid range. Please check block numbers.' });
+      return;
+    }
+
+    setSubtitles(prev => prev.map((item, idx) => {
+      const blockNum = idx + 1;
+      if (blockNum >= from && blockNum <= to) {
+        return {
+          ...item,
+          translatedText: item.text
+        };
+      }
+      return item;
+    }));
+
+    setStatus({ 
+      type: 'success', 
+      message: `Copied original text to Kurdish translation for blocks ${from} to ${to}.` 
+    });
+    setShowRangeModal(false);
+  };
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1455,16 +1482,24 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex gap-4">
+              <div className="flex flex-col gap-3">
                 <button 
                   onClick={handleTranslateRefineRange}
-                  className="flex-1 bg-[#141414] text-[#E4E3E0] py-3 text-[10px] md:text-xs uppercase tracking-[0.2em] font-mono font-bold hover:opacity-90 active:scale-95 transition-all"
+                  className="w-full bg-[#141414] text-[#E4E3E0] py-3 text-[10px] md:text-xs uppercase tracking-[0.2em] font-mono font-bold hover:opacity-90 active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
-                  Process Range
+                  <Languages size={14} />
+                  Translate & Refine Range
+                </button>
+                <button 
+                  onClick={handleCopyOriginalToTranslatedRange}
+                  className="w-full bg-[#E4E3E0] border border-[#141414] text-[#141414] py-3 text-[10px] md:text-xs uppercase tracking-[0.2em] font-mono font-bold hover:bg-[#141414] hover:text-[#E4E3E0] active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <FileText size={14} />
+                  Copy Original to Kurdish
                 </button>
                 <button 
                   onClick={() => setShowRangeModal(false)}
-                  className="px-6 border border-[#141414] text-[#141414] text-[10px] md:text-xs uppercase tracking-[0.2em] font-mono font-bold hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  className="w-full border border-[#141414] border-opacity-20 text-[#141414]/60 py-2.5 text-[10px] md:text-xs uppercase tracking-[0.2em] font-mono hover:border-opacity-100 hover:text-[#141414] transition-all cursor-pointer"
                 >
                   Cancel
                 </button>
