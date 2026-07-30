@@ -361,6 +361,86 @@ async function startServer() {
     }
   });
 
+  // Refine batch (Pass 2 Refinement) on server
+  app.post("/api/gemini/refine-batch", async (req, res) => {
+    try {
+      const { items, apiKey } = req.body;
+      if (!Array.isArray(items)) {
+        return res.status(400).json({ error: "Missing or invalid items array" });
+      }
+
+      const emptyItems = items.filter((item: any) => String(item.originalText || '').trim() === '');
+      const activeItems = items.filter((item: any) => String(item.originalText || '').trim() !== '');
+
+      const emptyResults = emptyItems.map((item: any) => ({
+        id: Number(item.id),
+        translatedText: String(item.translatedKurdish || item.originalText || '')
+      }));
+
+      if (activeItems.length === 0) {
+        return res.json({ results: emptyResults });
+      }
+
+      const cleanedItems = activeItems.map((item: any) => ({
+        id: Number(item.id),
+        originalText: String(item.originalText).replace(/\n/g, '<br>'),
+        translatedKurdish: String(item.translatedKurdish || '').replace(/\n/g, '<br>')
+      }));
+
+      let refinedResults;
+      try {
+        refinedResults = await callGeminiWithModelFallback(apiKey, async (ai, modelName) => {
+          const refinePrompt = `You are a native Kurdish Sorani subtitle localization and refinement specialist.
+            Your task is to review and edit the translated Kurdish subtitles to make them highly natural, idiomatic, flowing, and professional.
+
+            STANDARDS FOR PERFECT REFINEMENT:
+            1. LINGUISTIC PRECISION (SOV): English is Subject-Verb-Object (SVO), while Kurdish Sorani is Subject-Object-Verb (SOV). You MUST completely restructure all sentences to place the verb appropriately at the end. DO NOT allow SVO remnants.
+            2. NATIVE IDIOMATIC FLOW: Discard all literal, word-for-word, or "translated-sounding" phrasing. Replace with authentic, natural conversational Kurdish used in high-quality media. If an English idiom lacks a direct counterpart, capture the underlying meaning using appropriate Kurdish imagery/idioms.
+            3. REGISTER ADAPTATION: Adapt the tone based on the context implied by the source text (e.g., formal dialogue should be rendered formally; casual slang should be rendered with modern conversational equivalents).
+            4. RTL & PUNCTUATION INTEGRITY: This is a strict RTL language. Ensure all sentence punctuation (؟, ،, ؛) is correctly positioned at the absolute end of the Kurdish text sequence. No punctuation mark can appear on the right-side start of a rendered line. FOR EXCLAMATION MARKS (!) AND COMMAS (,), due to player rendering limitations, place them at the absolute beginning of the Kurdish sentence to ensure they render on the correct side.
+            5. SUBTITLE ECONOMY: Maintain brevity without sacrificing meaning. Ensure maximum readability for viewers within the duration of the subtitle display.
+            6. FORMATTING: Preserve all '<br>' tags exactly as positioned. Never translate or paraphrase these tags.
+            7. ZERO ENGLISH TOLERANCE: Ensure total translation. If an original line was untranslatable in Pass 1, you MUST provide a professional, highly localized, or contextualized translation in Pass 2.
+
+            ITEMS FOR SUBTITLE REFINEMENT AND RESTRUCTURING:
+            ${JSON.stringify(cleanedItems)}`;
+
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: [{ role: "user", parts: [{ text: refinePrompt }] }],
+            config: {
+              systemInstruction: "You are a native Kurdish Sorani subtitle editor. Review 'originalText' and 'translatedKurdish' then output the refined and polished Kurdish translation under 'translatedText'. Output MUST be JSON array of objects with 'id' and 'translatedText'.",
+              responseMimeType: "application/json",
+              responseSchema: BATCH_SCHEMA,
+            }
+          });
+
+          const result = extractJson(response.text || "[]");
+          if (Array.isArray(result) && result.length === cleanedItems.length) {
+            return result.map((item: any) => ({
+              id: Number(item.id),
+              translatedText: typeof item.translatedText === 'string' 
+                ? item.translatedText.replace(/<br\s*\/?>/gi, '\n') 
+                : String(item.translatedText).replace(/<br\s*\/?>/gi, '\n')
+            }));
+          }
+          throw new Error(`Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
+        });
+      } catch (refineError) {
+        console.warn("[Refinement Pass Bypassed] Server-side refinement failed, falling back to raw translated results:", refineError);
+        refinedResults = cleanedItems.map((item: any) => ({
+          id: Number(item.id),
+          translatedText: item.translatedKurdish.replace(/<br\s*\/?>/gi, '\n')
+        }));
+      }
+
+      res.json({ results: [...emptyResults, ...refinedResults] });
+    } catch (error: any) {
+      console.error("Batch refinement API error:", error);
+      res.status(500).json({ error: error.message || "Batch refinement failed" });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

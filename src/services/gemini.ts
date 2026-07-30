@@ -180,7 +180,22 @@ async function clientSideTranslateRefineBatch(
     };
   });
 
-  // PASS 2: Refinement
+  return await clientSideRefineBatch(itemsForRefinement, apiKey);
+}
+
+/**
+ * Standalone Refinement Batch (Pass 2) - Client-side
+ */
+export async function clientSideRefineBatch(
+  items: { id: number; originalText: string; translatedKurdish: string }[],
+  apiKey: string
+): Promise<{ id: number; translatedText: string }[]> {
+  const cleanedItems = items.map((item) => ({
+    id: Number(item.id),
+    originalText: String(item.originalText).replace(/\n/g, '<br>'),
+    translatedKurdish: String(item.translatedKurdish || '').replace(/\n/g, '<br>')
+  }));
+
   try {
     return await callClientGeminiWithModelFallback(apiKey, async (aiInstance, modelName) => {
       const refinePrompt = `You are a native Kurdish Sorani subtitle localization and refinement specialist.
@@ -196,7 +211,7 @@ async function clientSideTranslateRefineBatch(
         7. ZERO ENGLISH TOLERANCE: Ensure total translation. If an original line was untranslatable in Pass 1, you MUST provide a professional, highly localized, or contextualized translation in Pass 2.
 
         ITEMS FOR SUBTITLE REFINEMENT AND RESTRUCTURING:
-        ${JSON.stringify(itemsForRefinement)}`;
+        ${JSON.stringify(cleanedItems)}`;
 
       const response = await aiInstance.models.generateContent({
         model: modelName,
@@ -221,10 +236,146 @@ async function clientSideTranslateRefineBatch(
     });
   } catch (refineError) {
     console.warn("[Refinement Pass Bypassed] Client-side refinement failed, falling back to raw translated results:", refineError);
-    return pass1Results.map((item: any) => ({
+    return items.map((item: any) => ({
       id: Number(item.id),
-      translatedText: item.translatedText.replace(/<br\s*\/?>/gi, '\n')
+      translatedText: String(item.translatedKurdish || item.originalText).replace(/<br\s*\/?>/gi, '\n')
     }));
+  }
+}
+
+/**
+ * Standalone Refinement Batch (Pass 2) - Server API with client fallback
+ */
+export async function refineBatch(
+  itemsToRefine: { id: number; originalText: string; translatedKurdish: string }[]
+): Promise<{ id: number; translatedText: string }[]> {
+  const emptyItems = itemsToRefine.filter(item => item.originalText.trim() === '');
+  const activeItems = itemsToRefine.filter(item => item.originalText.trim() !== '');
+
+  const emptyResults = emptyItems.map(item => ({ id: item.id, translatedText: item.translatedKurdish || item.originalText }));
+
+  if (activeItems.length === 0) {
+    return emptyResults;
+  }
+
+  const apiKey = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
+
+  try {
+    const response = await fetch('/api/gemini/refine-batch', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ items: activeItems, apiKey })
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+
+    if (response.status === 404 || contentType.includes('text/html')) {
+      console.warn("[SPA/Redirect Fallback] Server refine endpoint returned 404 or HTML. Running direct browser batch refinement.");
+      if (!apiKey) {
+        throw new Error("No backend server found (or server returned HTML) and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
+      }
+      const activeResults = await clientSideRefineBatch(activeItems, apiKey);
+      return [...emptyResults, ...activeResults];
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Batch refinement failed with status ${response.status}`);
+    }
+
+    const responseText = await response.text();
+    try {
+      const data = JSON.parse(responseText);
+      return [...emptyResults, ...data.results];
+    } catch {
+      console.warn("[Parse Fallback] Server refine response was not valid JSON. Running direct browser batch refinement.");
+      if (!apiKey) {
+        throw new Error("Server returned non-JSON response and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
+      }
+      const activeResults = await clientSideRefineBatch(activeItems, apiKey);
+      return [...emptyResults, ...activeResults];
+    }
+  } catch (error: any) {
+    console.warn("[Refine Exception Handled] Falling back to direct browser batch refinement:", error);
+    if (apiKey) {
+      try {
+        const activeResults = await clientSideRefineBatch(activeItems, apiKey);
+        return [...emptyResults, ...activeResults];
+      } catch (innerErr: any) {
+        throw new Error(`Direct client batch refinement failed: ${innerErr.message || innerErr}`);
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * Single-pass helper function (Pass 1 Translation)
+ */
+async function executePass1Batch(
+  itemsToTranslate: { id: number; text: string }[]
+): Promise<{ id: number; translatedText: string }[]> {
+  const emptyItems = itemsToTranslate.filter(item => item.text.trim() === '');
+  const activeItems = itemsToTranslate.filter(item => item.text.trim() !== '');
+
+  const emptyResults = emptyItems.map(item => ({ id: item.id, translatedText: item.text }));
+
+  if (activeItems.length === 0) {
+    return emptyResults;
+  }
+
+  const apiKey = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
+
+  try {
+    const response = await fetch('/api/gemini/translate-refine-batch', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ items: activeItems, apiKey, shouldRefine: false })
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+
+    if (response.status === 404 || contentType.includes('text/html')) {
+      console.warn("[SPA/Redirect Fallback] Server batch endpoint returned 404 or HTML. Running direct browser batch localization.");
+      if (!apiKey) {
+        throw new Error("No backend server found (or server returned HTML) and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
+      }
+      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, false);
+      return [...emptyResults, ...activeResults];
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Batch translation failed with status ${response.status}`);
+    }
+
+    const responseText = await response.text();
+    try {
+      const data = JSON.parse(responseText);
+      return [...emptyResults, ...data.results];
+    } catch {
+      console.warn("[Parse Fallback] Server batch response was not valid JSON. Running direct browser batch localization.");
+      if (!apiKey) {
+        throw new Error("Server returned non-JSON response and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
+      }
+      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, false);
+      return [...emptyResults, ...activeResults];
+    }
+  } catch (error: any) {
+    console.warn("[Batch Exception Handled] Falling back to direct browser batch localization:", error);
+    if (apiKey) {
+      try {
+        const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, false);
+        return [...emptyResults, ...activeResults];
+      } catch (innerErr: any) {
+        throw new Error(`Direct client batch translation failed: ${innerErr.message || innerErr}`);
+      }
+    }
+    throw error;
   }
 }
 
@@ -287,71 +438,36 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
 }
 
 /**
- * Joint Translation & Refinement (Joint 1-Pass) - proxies through secure local server with client-side fallback
+ * Joint Translation & Refinement (2-Pass Pipeline with Progressive Callbacks)
  */
 export async function jointTranslateRefineBatch(
   itemsToTranslate: { id: number; text: string }[],
-  shouldRefine: boolean = true
+  shouldRefine: boolean = true,
+  onPass1Complete?: (pass1Results: { id: number; translatedText: string }[]) => void
 ): Promise<{ id: number; translatedText: string }[]> {
-  const emptyItems = itemsToTranslate.filter(item => item.text.trim() === '');
-  const activeItems = itemsToTranslate.filter(item => item.text.trim() !== '');
+  // 1. Pass 1: Translate
+  const pass1Results = await executePass1Batch(itemsToTranslate);
 
-  const emptyResults = emptyItems.map(item => ({ id: item.id, translatedText: item.text }));
-
-  if (activeItems.length === 0) {
-    return emptyResults;
+  // Deliver intermediate Pass 1 translated results immediately!
+  if (onPass1Complete) {
+    onPass1Complete(pass1Results);
   }
 
-  const apiKey = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
-
-  try {
-    const response = await fetch('/api/gemini/translate-refine-batch', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ items: activeItems, apiKey, shouldRefine })
-    });
-
-    const contentType = response.headers.get('content-type') || '';
-
-    if (response.status === 404 || contentType.includes('text/html')) {
-      console.warn("[SPA/Redirect Fallback] Server batch endpoint returned 404 or HTML. Running direct browser batch localization.");
-      if (!apiKey) {
-        throw new Error("No backend server found (or server returned HTML) and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
-      }
-      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, shouldRefine);
-      return [...emptyResults, ...activeResults];
-    }
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Batch translation failed with status ${response.status}`);
-    }
-
-    const responseText = await response.text();
-    try {
-      const data = JSON.parse(responseText);
-      return [...emptyResults, ...data.results];
-    } catch {
-      console.warn("[Parse Fallback] Server batch response was not valid JSON. Running direct browser batch localization.");
-      if (!apiKey) {
-        throw new Error("Server returned non-JSON response and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
-      }
-      const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, shouldRefine);
-      return [...emptyResults, ...activeResults];
-    }
-  } catch (error: any) {
-    console.warn("[Batch Exception Handled] Falling back to direct browser batch localization:", error);
-    if (apiKey) {
-      try {
-        const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, shouldRefine);
-        return [...emptyResults, ...activeResults];
-      } catch (innerErr: any) {
-        throw new Error(`Direct client batch translation failed: ${innerErr.message || innerErr}`);
-      }
-    }
-    // If no manual API key, then throw the original exception so the user is guided/notified
-    throw error;
+  // If refinement is disabled, return Pass 1 results directly
+  if (!shouldRefine) {
+    return pass1Results;
   }
+
+  // 2. Pass 2: Refine
+  const itemsToRefine = itemsToTranslate.map(item => {
+    const p1 = pass1Results.find(r => r.id === item.id);
+    return {
+      id: item.id,
+      originalText: item.text,
+      translatedKurdish: p1 ? p1.translatedText : ""
+    };
+  });
+
+  const refinedResults = await refineBatch(itemsToRefine);
+  return refinedResults;
 }

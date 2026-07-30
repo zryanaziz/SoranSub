@@ -611,8 +611,8 @@ export default function App() {
     let completedSteps = 0;
     
     try {
-      // Joint 1-Pass: Translate & Refine in one go
-      setStatus({ type: 'info', message: shouldRefine ? 'Translating & Refining (Joint 1-Pass)...' : 'Translating (Single-Pass)...' });
+      // 2-Pass Pipeline: Translate (Pass 1) then Refine (Pass 2)
+      setStatus({ type: 'info', message: shouldRefine ? 'Translating (Pass 1) -> Refining (Pass 2)...' : 'Translating (Single-Pass)...' });
       for (let i = 0; i < indices.length; i += batchSize * concurrency) {
         const batchPromises = [];
         
@@ -629,7 +629,33 @@ export default function App() {
           
           batchPromises.push((async () => {
             try {
-              const results = await jointTranslateRefineBatch(itemsToTranslate, shouldRefine);
+              const results = await jointTranslateRefineBatch(
+                itemsToTranslate, 
+                shouldRefine,
+                (pass1Results) => {
+                  // Pass 1 complete: Update UI immediately with preliminary Sorani Kurdish translation
+                  const p1Map = new Map<number, string>();
+                  pass1Results.forEach(res => {
+                    p1Map.set(res.id, res.translatedText);
+                  });
+                  
+                  currentBatchIndices.forEach(originalIdx => {
+                    const originalItem = updatedSubtitles[originalIdx];
+                    if (!originalItem) return;
+
+                    const itemIndex = originalItem.index || (originalIdx + 1);
+                    const translated = p1Map.get(itemIndex);
+                    if (translated !== undefined) {
+                      updatedSubtitles[originalIdx] = {
+                        ...originalItem,
+                        translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(translated)
+                      };
+                    }
+                  });
+
+                  setSubtitles([...updatedSubtitles]);
+                }
+              );
               
               const resultsMap = new Map<number, string>();
               results.forEach(res => {
@@ -789,15 +815,7 @@ export default function App() {
   
   const handleReTranslateBlock = async () => {
     if (selectedIndex === null) return;
-    const item = subtitles[selectedIndex];
-    setStatus({ type: 'info', message: 'Translating block...' });
-    try {
-      const translation = await translateToKurdishSorani(item.text);
-      handleUpdateText(item.id, stripFormatting(translation), true);
-      setStatus({ type: 'success', message: 'Block translated.' });
-    } catch (err: any) {
-      setStatus({ type: 'error', message: 'Failed to translate block.' });
-    }
+    handleProcessSubtitles([selectedIndex], isDoublePassEnabled);
   };
 
   const handleDownload = (useTranslation: boolean) => {
