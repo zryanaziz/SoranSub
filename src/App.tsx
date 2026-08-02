@@ -113,6 +113,16 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [subtitles, fileName]);
 
+  const buildSearchRegex = (target: string) => {
+    // Break target around line-break tokens (\N, \n, /N, /n, or actual newlines)
+    const chunks = target.split(/\\N|\\n|\/N|\/n|\r?\n/gi);
+    // Escape standard regex special characters in each text chunk
+    const escapedChunks = chunks.map(chunk => chunk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    // Rejoin with regex group matching any representation of newline
+    const pattern = escapedChunks.join('(?:\\\\N|\\\\n|\\/N|\\/n|\\n)');
+    return new RegExp(pattern, 'gi');
+  };
+
   const handleReplaceNext = () => {
     if (!searchQuery.trim()) return;
     
@@ -120,8 +130,8 @@ export default function App() {
     if (terms.length === 0) return;
     const target = terms[0];
     
-    const escapedSearch = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(escapedSearch, 'gi');
+    const regex = buildSearchRegex(target);
+    const formattedReplace = replaceQuery.replace(/\\n|\\N|\/n|\/N/g, '\n');
     
     const startFrom = selectedIndex !== null ? selectedIndex : -1;
     
@@ -132,8 +142,8 @@ export default function App() {
       const hasMatch = item.text.match(regex) || (item.translatedText && item.translatedText.match(regex));
       
       if (hasMatch) {
-        const newText = item.text.replace(regex, replaceQuery);
-        const newTranslated = item.translatedText ? item.translatedText.replace(regex, replaceQuery) : null;
+        const newText = item.text.replace(regex, formattedReplace);
+        const newTranslated = item.translatedText ? item.translatedText.replace(regex, formattedReplace) : null;
         
         setSubtitles(prev => prev.map((s, sIdx) => sIdx === idx ? { ...s, text: newText, translatedText: newTranslated } : s));
         setSelectedIndex(idx);
@@ -156,8 +166,8 @@ export default function App() {
     if (terms.length === 0) return;
     const target = terms[0];
     
-    const escapedSearch = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(escapedSearch, 'gi');
+    const regex = buildSearchRegex(target);
+    const formattedReplace = replaceQuery.replace(/\\n|\\N|\/n|\/N/g, '\n');
     let count = 0;
     
     const updated = subtitles.map(item => {
@@ -165,12 +175,12 @@ export default function App() {
       const newText = item.text.replace(regex, () => { 
         localMatched = true; 
         count++; 
-        return replaceQuery; 
+        return formattedReplace; 
       });
       const newTranslated = item.translatedText ? item.translatedText.replace(regex, () => { 
         localMatched = true; 
         count++; 
-        return replaceQuery; 
+        return formattedReplace; 
       }) : null;
       return { ...item, text: newText, translatedText: newTranslated };
     });
@@ -1258,9 +1268,15 @@ export default function App() {
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-30" />
                   <input 
                     type="text"
-                    placeholder="Search keywords (use comma for multiple)..."
+                    placeholder="Search keywords (use \n, \N, /N for line breaks)..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleReplaceNext();
+                      }
+                    }}
                     className="w-full pl-9 pr-8 py-2 bg-transparent border border-[#141414] border-opacity-20 text-xs font-mono focus:outline-none focus:border-opacity-100"
                   />
                   {searchQuery && (
@@ -1273,29 +1289,35 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="flex gap-2 items-center">
+                <div className="flex gap-2 items-start">
                   <div className="relative flex-1">
-                    <Type size={14} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-30" />
-                    <input 
-                      type="text"
-                      placeholder="Replace with..."
+                    <Type size={14} className="absolute left-3 top-2.5 opacity-30 pointer-events-none" />
+                    <textarea 
+                      rows={replaceQuery.includes('\n') ? 2 : 1}
+                      placeholder="Replace with (press Enter for newline, Ctrl+Enter to replace)..."
                       value={replaceQuery}
                       onChange={(e) => setReplaceQuery(e.target.value)}
-                      className="w-full pl-9 pr-2 py-1.5 bg-transparent border border-[#141414] border-opacity-20 text-xs font-mono focus:outline-none focus:border-opacity-100 placeholder:opacity-30"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                          e.preventDefault();
+                          handleReplaceNext();
+                        }
+                      }}
+                      className="w-full pl-9 pr-2 py-1.5 bg-transparent border border-[#141414] border-opacity-20 text-xs font-mono focus:outline-none focus:border-opacity-100 placeholder:opacity-30 resize-none min-h-[32px] leading-relaxed"
                     />
                   </div>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 pt-0.5">
                     <button 
                       onClick={handleReplaceNext}
                       disabled={!searchQuery}
-                      className="px-2 py-1.5 border border-[#141414] text-[10px] uppercase font-mono hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30"
+                      className="px-2 py-1.5 border border-[#141414] text-[10px] uppercase font-mono hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30 cursor-pointer"
                     >
                       Next
                     </button>
                     <button 
                       onClick={handleReplaceAll}
                       disabled={!searchQuery}
-                      className="px-2 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase font-mono hover:opacity-90 transition-colors disabled:opacity-30"
+                      className="px-2 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase font-mono hover:opacity-90 transition-colors disabled:opacity-30 cursor-pointer"
                     >
                       All
                     </button>

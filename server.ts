@@ -216,7 +216,7 @@ async function startServer() {
         });
 
         const translated = response.text || text;
-        return translated.replace(/<br\s*\/?>/gi, '\n');
+        return translated.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
       });
 
       res.json({ translatedText: result });
@@ -290,7 +290,7 @@ async function startServer() {
       if (!shouldRefine) {
         const pass1OnlyResults = pass1Results.map((item: any) => ({
           id: Number(item.id),
-          translatedText: item.translatedText.replace(/<br\s*\/?>/gi, '\n')
+          translatedText: item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
         }));
         return res.json({ results: [...emptyResults, ...pass1OnlyResults] });
       }
@@ -339,8 +339,8 @@ async function startServer() {
             return result.map((item: any) => ({
               id: Number(item.id),
               translatedText: typeof item.translatedText === 'string' 
-                ? item.translatedText.replace(/<br\s*\/?>/gi, '\n') 
-                : String(item.translatedText).replace(/<br\s*\/?>/gi, '\n')
+                ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n') 
+                : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
             }));
           }
           throw new Error(`Pass 2 Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
@@ -350,7 +350,7 @@ async function startServer() {
         // Fallback to Pass 1 translation
         refinedResults = pass1Results.map((item: any) => ({
           id: Number(item.id),
-          translatedText: item.translatedText.replace(/<br\s*\/?>/gi, '\n')
+          translatedText: item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
         }));
       }
 
@@ -420,8 +420,8 @@ async function startServer() {
             return result.map((item: any) => ({
               id: Number(item.id),
               translatedText: typeof item.translatedText === 'string' 
-                ? item.translatedText.replace(/<br\s*\/?>/gi, '\n') 
-                : String(item.translatedText).replace(/<br\s*\/?>/gi, '\n')
+                ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n') 
+                : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
             }));
           }
           throw new Error(`Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
@@ -430,7 +430,7 @@ async function startServer() {
         console.warn("[Refinement Pass Bypassed] Server-side refinement failed, falling back to raw translated results:", refineError);
         refinedResults = cleanedItems.map((item: any) => ({
           id: Number(item.id),
-          translatedText: item.translatedKurdish.replace(/<br\s*\/?>/gi, '\n')
+          translatedText: item.translatedKurdish.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
         }));
       }
 

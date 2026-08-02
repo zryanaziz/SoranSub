@@ -112,7 +112,7 @@ async function clientSideTranslate(text: string, apiKey: string): Promise<string
     });
 
     const translated = response.text || text;
-    return translated.replace(/<br\s*\/?>/gi, '\n');
+    return translated.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
   });
 }
 
@@ -166,7 +166,7 @@ async function clientSideTranslateRefineBatch(
   if (!shouldRefine) {
     return pass1Results.map((item: any) => ({
       id: Number(item.id),
-      translatedText: item.translatedText.replace(/<br\s*\/?>/gi, '\n')
+      translatedText: item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
     }));
   }
 
@@ -228,8 +228,8 @@ export async function clientSideRefineBatch(
         return result.map((item: any) => ({
           id: Number(item.id),
           translatedText: typeof item.translatedText === 'string' 
-            ? item.translatedText.replace(/<br\s*\/?>/gi, '\n') 
-            : String(item.translatedText).replace(/<br\s*\/?>/gi, '\n')
+            ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n') 
+            : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
         }));
       }
       throw new Error(`Pass 2 Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
@@ -238,7 +238,7 @@ export async function clientSideRefineBatch(
     console.warn("[Refinement Pass Bypassed] Client-side refinement failed, falling back to raw translated results:", refineError);
     return items.map((item: any) => ({
       id: Number(item.id),
-      translatedText: String(item.translatedKurdish || item.originalText).replace(/<br\s*\/?>/gi, '\n')
+      translatedText: String(item.translatedKurdish || item.originalText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
     }));
   }
 }
