@@ -237,14 +237,35 @@ export function shiftSubtitles(items: SubtitleItem[], offsetSeconds: number): Su
   });
 }
 
+export function moveTrailingPunctuationToStart(text: string): string {
+  if (!text) return text;
+  return text
+    .split('\n')
+    .map(line => {
+      let l = line.trim();
+      if (!l) return l;
+
+      // Match trailing punctuation marks at the end of the line:
+      // e.g. ..., …, ., ,, ،, ?, ؟, !, ;, ؛, :
+      const match = l.match(/(?:\.\.\.|…|[\.\,\،\?\؟\!\;\؛\:])+$/);
+      if (match) {
+        const punct = match[0];
+        const rest = l.slice(0, l.length - punct.length).trimEnd();
+        if (rest) {
+          return `${punct}${rest}`;
+        }
+      }
+      return l;
+    })
+    .join('\n');
+}
+
 export function stripFormatting(text: string): string {
   if (!text) return "";
   // Convert literal \N, \n, /N, /n, and <br> variants to actual newlines
   let cleanText = text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
   // Removes HTML-like tags (e.g. <font color="...">, <i>, <b>)
   cleanText = cleanText.replace(/<[^>]*>/g, '');
-  // Remove leading and trailing dots
-  cleanText = cleanText.replace(/^\.+|\.+$/g, '');
   // Normalize newlines: strip duplicate empty lines to prevent SRT block splitting
   cleanText = cleanText.split('\n')
                        .map(line => line.trim())

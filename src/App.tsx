@@ -29,7 +29,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import { SubtitleItem } from './types';
-import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stripFormatting } from './lib/subtitle-utils';
+import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stripFormatting, moveTrailingPunctuationToStart } from './lib/subtitle-utils';
 import { getMKVTracks, extractMKVSubtitle, mkvSubtitlesToSRT, MKVTrack } from './lib/mkv-utils';
 import { 
   translateToKurdishSorani, 
@@ -208,12 +208,22 @@ export default function App() {
       if (!str) return str;
       let s = str.trim();
 
-      // REMOVAL: Remove hyphens, dashes and specific punctuation ONLY from start or end of lines
+      // REMOVAL: Remove hyphens, dashes and edge punctuation from start/end of lines, but KEEP triple dots (...) and unicode ellipsis (…)
       s = s.split('\n').map(line => {
-        return line.trim()
-          .replace(/^[-–—.,!،؛\s]+|[-–—.,!،؛\s]+$/g, '') // Remove these symbols from start/end
-          .replace(/^\.\.\.|\.\.\.$/g, '')             // Handle triple dots specifically
-          .trim();
+        let l = line.trim();
+        // Remove leading hyphens/dashes before ellipsis if any (e.g. "- ...Hello" -> "...Hello")
+        l = l.replace(/^[-–—\s]+(?=\.\.\.|…)/, '');
+        
+        // Protect triple dots (...) and unicode ellipsis (…) with placeholder
+        l = l.replace(/\.\.\.|…/g, '___ELLIPSIS___');
+        
+        // Remove edge symbols (hyphens, dashes, commas, semicolons, exclamations, single periods) from start/end
+        l = l.replace(/^[-–—.,!،؛\s]+|[-–—.,!،؛\s]+$/g, '');
+        
+        // Restore ellipsis
+        l = l.replace(/___ELLIPSIS___/g, '...');
+        
+        return l.trim();
       }).filter(line => line.length > 0).join('\n').trim();
       if (!s) return "";
 
@@ -223,6 +233,9 @@ export default function App() {
       if (hasArabicChars) {
         // Convert ? to Kurdish variant
         s = s.replace(/\?/g, '؟');
+
+        // Move trailing punctuation (., ,, ،, ..., ?, ؟, !, ;, ؛) to the start of the line for RTL player compatibility
+        s = moveTrailingPunctuationToStart(s);
 
         // Mirror brackets (The actual "Symbol Swap" for RTL/LTR compatibility)
         const mirrorMap: Record<string, string> = {
