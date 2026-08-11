@@ -252,15 +252,28 @@ export function moveTrailingPunctuationToStart(text: string): string {
         l = l.slice(qMark.length).trimStart() + qMark;
       }
 
-      // Match trailing punctuation marks at the end of the line, EXCEPT ? and ؟
-      // e.g. ..., …, ., ,, ،, !, ;, ؛, :
-      const match = l.match(/(?:\.\.\.|…|[\.\,\،\!\;\؛\:])+$/);
-      if (match) {
-        const punct = match[0];
-        const rest = l.slice(0, l.length - punct.length).trimEnd();
-        if (rest) {
-          return `${punct}${rest}`;
+      // Extract trailing punctuation at the end of the line (except ? and ؟)
+      let trailingPunct = '';
+      const matchPunct = l.match(/(?:\.\.\.|…|[\.\,\،\!\;\؛\:])+$/);
+      if (matchPunct) {
+        trailingPunct = matchPunct[0];
+        l = l.slice(0, l.length - trailingPunct.length).trimEnd();
+      }
+
+      // If a line STARTS with numbers or number expressions (e.g. "100 years", "100 ساڵ", "10 مانگ", "100"):
+      // Move leading number/phrase to the end of the line so RTL video players render it at the visual start (right side).
+      const numMatch = l.match(/^((?:[0-9]+|[٠-٩]+)(?:\.[0-9]+)?(?:\s+\S+)?)\s+(.+)$/);
+      if (numMatch) {
+        const numPart = numMatch[1].trim();
+        const restPart = numMatch[2].trim();
+        if (numPart && restPart) {
+          l = `${restPart} ${numPart}`;
         }
+      }
+
+      // Re-attach trailing punctuation to the absolute START of the line for RTL player compatibility
+      if (trailingPunct) {
+        return `${trailingPunct}${l}`;
       }
       return l;
     })
