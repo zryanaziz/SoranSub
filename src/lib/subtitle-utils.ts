@@ -245,9 +245,16 @@ export function moveTrailingPunctuationToStart(text: string): string {
       let l = line.trim();
       if (!l) return l;
 
-      // Match trailing punctuation marks at the end of the line:
-      // e.g. ..., …, ., ,, ،, ?, ؟, !, ;, ؛, :
-      const match = l.match(/(?:\.\.\.|…|[\.\,\،\?\؟\!\;\؛\:])+$/);
+      // Revert leading question marks (? or ؟) back to the end of the line
+      const leadingQuestion = l.match(/^([\?\؟]+)/);
+      if (leadingQuestion) {
+        const qMark = leadingQuestion[0];
+        l = l.slice(qMark.length).trimStart() + qMark;
+      }
+
+      // Match trailing punctuation marks at the end of the line, EXCEPT ? and ؟
+      // e.g. ..., …, ., ,, ،, !, ;, ؛, :
+      const match = l.match(/(?:\.\.\.|…|[\.\,\،\!\;\؛\:])+$/);
       if (match) {
         const punct = match[0];
         const rest = l.slice(0, l.length - punct.length).trimEnd();
