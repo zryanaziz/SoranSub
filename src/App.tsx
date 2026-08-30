@@ -203,7 +203,21 @@ export default function App() {
     let tagCount = 0;
     const initialCount = subtitles.length;
 
-    // Helper for character swapping - specifically for Kurdish Sorani requirements
+    // Helper to clean original (source) subtitles:
+    // Strips SDH tags and speaker labels, cleans up excessive whitespace,
+    // but strictly PRESERVES all original punctuation (commas, dots, question marks, exclamation marks, etc.)
+    const cleanOriginalText = (str: string) => {
+      if (!str) return str;
+      let s = str.replace(sdhRegex, '').replace(speakerRegex, '');
+      s = s.split('\n')
+        .map(line => line.replace(/[ \t]+/g, ' ').trim())
+        .filter(line => line.length > 0)
+        .join('\n')
+        .trim();
+      return s;
+    };
+
+    // Helper for character swapping - specifically for Kurdish Sorani requirements on translated text
     const swapSymbols = (str: string) => {
       if (!str) return str;
       let s = str.trim();
@@ -261,17 +275,15 @@ export default function App() {
       return s;
     };
 
-    // Step 1: Strip tags and swap symbols
+    // Step 1: Strip tags and preserve original punctuation
     const step1 = subtitles.map(item => {
-      // Remove SDH markers and speaker names
-      let newText = item.text.replace(sdhRegex, '').replace(speakerRegex, '').replace(/[ \t]+/g, ' ').trim();
-      let newTranslated = item.translatedText ? item.translatedText.replace(sdhRegex, '').replace(speakerRegex, '').replace(/[ \t]+/g, ' ').trim() : null;
-      
-      // Punctuation and cleaning logic
-      newText = swapSymbols(newText);
-      if (newTranslated) {
-        newTranslated = swapSymbols(newTranslated);
-      }
+      // Clean original text: strip SDH markers & speaker names without removing comma, dot, or ?
+      let newText = cleanOriginalText(item.text);
+
+      // Clean translated text: strip SDH markers & format Kurdish RTL symbols
+      let newTranslated = item.translatedText 
+        ? swapSymbols(item.translatedText.replace(sdhRegex, '').replace(speakerRegex, '').replace(/[ \t]+/g, ' ').trim())
+        : null;
 
       // If the text becomes empty after stripping tags, we pad with a space 
       // to keep the block "alive" and valid for subtitle players/editors.

@@ -67,8 +67,14 @@ function extractJson(text: string): any {
 }
 
 /**
- * Intelligent client-side fallback/rotator that runs queries completely inside the browser
- * if the Express server is offline (e.g. running on a static host like Vercel).
+ * Intelligent client-side fallback that runs queries strictly in order:
+ * 1. gemini-3.7-flash-lite
+ * 2. gemini-3.6-flash-lite
+ * 3. gemini-3.5-flash-lite
+ * 4. gemini-3.1-flash-lite
+ * 5. gemini-3.7-flash
+ * 6. gemini-3.6-flash
+ * 7. gemini-3.5-flash
  */
 async function callClientGeminiWithModelFallback<T>(
   apiKey: string,
@@ -76,17 +82,16 @@ async function callClientGeminiWithModelFallback<T>(
 ): Promise<T> {
   const ai = new GoogleGenAI({ apiKey });
   let lastError: any = null;
-  const startIndex = currentModelIndex;
-  currentModelIndex = (currentModelIndex + 1) % MODELS.length;
 
+  // Always start with primary default model (index 0) and cascade sequentially
   for (let pass = 1; pass <= 2; pass++) {
     for (let i = 0; i < MODELS.length; i++) {
-      const modelIndex = (startIndex + i) % MODELS.length;
-      const modelName = MODELS[modelIndex];
+      const modelName = MODELS[i];
+      currentModelIndex = i;
 
       try {
         if (pass > 1) {
-          const delayTime = 1200 * (i + 1);
+          const delayTime = 1000 * (i + 1);
           await new Promise(resolve => setTimeout(resolve, delayTime));
         }
         return await fn(ai, modelName);

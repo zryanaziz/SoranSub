@@ -162,8 +162,14 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 5, delay = 1500): Pr
 }
 
 /**
- * Intelligent fall-back and load balancer that tries models sequentially per-request.
- * Fully decoupled from destructive global-scrambling.
+ * Intelligent fall-back that tries models strictly in sequence per-request:
+ * 1. gemini-3.7-flash-lite
+ * 2. gemini-3.6-flash-lite
+ * 3. gemini-3.5-flash-lite
+ * 4. gemini-3.1-flash-lite
+ * 5. gemini-3.7-flash
+ * 6. gemini-3.6-flash
+ * 7. gemini-3.5-flash
  */
 async function callGeminiWithModelFallback<T>(
   apiKey: string,
@@ -172,26 +178,22 @@ async function callGeminiWithModelFallback<T>(
   const ai = getAI(apiKey);
   let lastError: any = null;
 
-  // Distribute the entry model index slightly across concurrent requests
-  const startIndex = currentModelIndex;
-  currentModelIndex = (currentModelIndex + 1) % MODELS.length;
-
-  // We perform up to 2 passes over our list of models
+  // Always start with primary default model (index 0) and cascade sequentially
   for (let pass = 1; pass <= 2; pass++) {
     for (let i = 0; i < MODELS.length; i++) {
-      const modelIndex = (startIndex + i) % MODELS.length;
-      const modelName = MODELS[modelIndex];
+      const modelName = MODELS[i];
+      currentModelIndex = i;
 
       try {
         if (pass > 1) {
           // Pass 2 includes a small cool-off delay
-          const delayTime = 1200 * (i + 1);
+          const delayTime = 1000 * (i + 1);
           console.log(`[Cooldown API] Waiting ${delayTime}ms before retrying ${modelName}...`);
           await new Promise(resolve => setTimeout(resolve, delayTime));
         }
 
         console.log(`[Gemini Request] Attempting query with model: ${modelName} (Pass ${pass})`);
-        return await withRetry(() => fn(ai, modelName), 3, 1500);
+        return await withRetry(() => fn(ai, modelName), 1, 1000);
       } catch (err: any) {
         lastError = err;
         const errorMsg = err.message || String(err);
