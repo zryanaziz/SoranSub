@@ -6,10 +6,9 @@ const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator a
 const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
 
 const MODELS = [
-  "gemini-3.7-flash-lite",
-  "gemini-3.6-flash-lite",
   "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash"
@@ -68,13 +67,12 @@ function extractJson(text: string): any {
 
 /**
  * Intelligent client-side fallback that runs queries strictly in order:
- * 1. gemini-3.7-flash-lite
- * 2. gemini-3.6-flash-lite
- * 3. gemini-3.5-flash-lite
- * 4. gemini-3.1-flash-lite
- * 5. gemini-3.7-flash
- * 6. gemini-3.6-flash
- * 7. gemini-3.5-flash
+ * 1. gemini-3.5-flash-lite
+ * 2. gemini-3.1-flash-lite
+ * 3. gemini-2.5-flash-lite
+ * 4. gemini-3.7-flash
+ * 5. gemini-3.6-flash
+ * 6. gemini-3.5-flash
  */
 async function callClientGeminiWithModelFallback<T>(
   apiKey: string,
