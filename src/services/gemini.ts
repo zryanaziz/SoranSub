@@ -323,9 +323,9 @@ export async function refineBatch(
 }
 
 /**
- * Single-pass helper function (Pass 1 Translation)
+ * Pass 1: Translate Batch into Kurdish Sorani
  */
-async function executePass1Batch(
+export async function translateBatch(
   itemsToTranslate: { id: number; text: string }[]
 ): Promise<{ id: number; translatedText: string }[]> {
   const emptyItems = itemsToTranslate.filter(item => item.text.trim() === '');
@@ -388,6 +388,17 @@ async function executePass1Batch(
     }
     throw error;
   }
+}
+
+export const executePass1Batch = translateBatch;
+
+/**
+ * Single block refinement helper
+ */
+export async function refineSingleBlock(originalText: string, translatedKurdish: string): Promise<string> {
+  if (!translatedKurdish || !translatedKurdish.trim()) return translatedKurdish;
+  const res = await refineBatch([{ id: 1, originalText, translatedKurdish }]);
+  return res[0]?.translatedText || translatedKurdish;
 }
 
 /**

@@ -33,6 +33,9 @@ import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stri
 import { getMKVTracks, extractMKVSubtitle, mkvSubtitlesToSRT, MKVTrack } from './lib/mkv-utils';
 import { 
   translateToKurdishSorani, 
+  translateBatch,
+  refineBatch,
+  refineSingleBlock,
   jointTranslateRefineBatch,
   setManualApiKey,
   getCurrentModel
@@ -659,14 +662,21 @@ export default function App() {
     setShowFinishedMessage(false);
     
     const batchSize = 100;
-    const concurrency = shouldRefine ? 3 : 4;
+    const concurrency = 3;
     const updatedSubtitles = [...subtitles];
     const totalSteps = indices.length;
-    let completedSteps = 0;
     
     try {
-      // 2-Pass Pipeline: Translate (Pass 1) then Refine (Pass 2)
-      setStatus({ type: 'info', message: shouldRefine ? 'Translating (Pass 1) -> Refining (Pass 2)...' : 'Translating (Single-Pass)...' });
+      // =========================================================================
+      // PASS 1: TRANSLATE FIRST (Complete translation across all requested items)
+      // =========================================================================
+      let completedTranslateSteps = 0;
+      const passTitle = shouldRefine ? 'Pass 1/2 (Translate)' : 'Translating';
+      setStatus({ 
+        type: 'info', 
+        message: `${passTitle}: Translating ${totalSteps} subtitles into Kurdish Sorani...` 
+      });
+
       for (let i = 0; i < indices.length; i += batchSize * concurrency) {
         const batchPromises = [];
         
@@ -683,33 +693,8 @@ export default function App() {
           
           batchPromises.push((async () => {
             try {
-              const results = await jointTranslateRefineBatch(
-                itemsToTranslate, 
-                shouldRefine,
-                (pass1Results) => {
-                  // Pass 1 complete: Update UI immediately with preliminary Sorani Kurdish translation
-                  const p1Map = new Map<number, string>();
-                  pass1Results.forEach(res => {
-                    p1Map.set(res.id, res.translatedText);
-                  });
-                  
-                  currentBatchIndices.forEach(originalIdx => {
-                    const originalItem = updatedSubtitles[originalIdx];
-                    if (!originalItem) return;
-
-                    const itemIndex = originalItem.index || (originalIdx + 1);
-                    const translated = p1Map.get(itemIndex);
-                    if (translated !== undefined) {
-                      updatedSubtitles[originalIdx] = {
-                        ...originalItem,
-                        translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(translated)
-                      };
-                    }
-                  });
-
-                  setSubtitles([...updatedSubtitles]);
-                }
-              );
+              // Perform translation pass on this batch
+              const results = await translateBatch(itemsToTranslate);
               
               const resultsMap = new Map<number, string>();
               results.forEach(res => {
@@ -743,7 +728,7 @@ export default function App() {
                 }
               });
 
-              // Double-Check: High-priority retry for any echoed blocks
+              // Double-Check: High-priority retry for any echoed blocks in Pass 1
               if (failedIndices.length > 0) {
                 const failedItems = failedIndices.map(idx => ({
                   id: updatedSubtitles[idx].index || (idx + 1),
@@ -751,8 +736,7 @@ export default function App() {
                 }));
                 
                 try {
-                  const recovered = await jointTranslateRefineBatch(failedItems, shouldRefine);
-                  
+                  const recovered = await translateBatch(failedItems);
                   const recoveredMap = new Map<number, string>();
                   recovered.forEach(res => {
                     recoveredMap.set(res.id, res.translatedText);
@@ -788,7 +772,6 @@ export default function App() {
                     }
                   });
 
-                  // Final Fallback: Single-block direct retry for any persistent failures
                   if (remainingFailedIndices.length > 0) {
                     await Promise.all(
                       remainingFailedIndices.map(async (originalIdx) => {
@@ -829,7 +812,7 @@ export default function App() {
               }
 
             } catch (err: any) {
-              console.error("Batch error:", err);
+              console.error("Pass 1 batch error:", err);
               throw err;
             }
           })());
@@ -837,16 +820,109 @@ export default function App() {
         
         await Promise.all(batchPromises);
         setSubtitles([...updatedSubtitles]);
-        completedSteps += Math.min(batchSize * concurrency, indices.length - i);
-        setProgress(Math.round((completedSteps / totalSteps) * 100));
+        completedTranslateSteps += Math.min(batchSize * concurrency, indices.length - i);
+        const pass1Progress = Math.round((completedTranslateSteps / totalSteps) * (shouldRefine ? 50 : 100));
+        setProgress(Math.max(5, pass1Progress));
+        setStatus({
+          type: 'info',
+          message: shouldRefine
+            ? `Pass 1/2 (Translate): Translated ${completedTranslateSteps}/${totalSteps} subtitles...`
+            : `Translating: ${completedTranslateSteps}/${totalSteps} subtitles complete...`
+        });
         
         if (i + batchSize * concurrency < indices.length) {
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      // If user selected 1-Pass mode (no refinement), finish here
+      if (!shouldRefine) {
+        setProgress(100);
+        setStatus({ type: 'success', message: `Translation complete! All ${totalSteps} subtitles translated.` });
+        playDing();
+        setShowFinishedMessage(true);
+        setTimeout(() => {
+          setIsTranslating(false);
+          setProgress(0);
+        }, 500);
+        return;
+      }
+
+      // =========================================================================
+      // PASS 1 COMPLETE -> AFTER COMPLETE THE TRANSLATE, DO PASS 2 REFINEMENT
+      // =========================================================================
+      setStatus({ 
+        type: 'info', 
+        message: `Pass 1 Complete! All ${totalSteps} subtitles translated. Starting Pass 2: Refinement & Polishing...` 
+      });
+      setProgress(50);
+      await new Promise(resolve => setTimeout(resolve, 600));
+
+      let completedRefineSteps = 0;
+
+      for (let i = 0; i < indices.length; i += batchSize * concurrency) {
+        const refineBatchPromises = [];
+
+        for (let c = 0; c < concurrency; c++) {
+          const startIdx = i + (c * batchSize);
+          if (startIdx >= indices.length) break;
+
+          const endIdx = Math.min(startIdx + batchSize, indices.length);
+          const currentBatchIndices = indices.slice(startIdx, endIdx);
+
+          const itemsToRefine = currentBatchIndices.map(idx => {
+            const item = updatedSubtitles[idx];
+            return {
+              id: item.index || (idx + 1),
+              originalText: item.text,
+              translatedKurdish: item.translatedText || ""
+            };
+          });
+
+          refineBatchPromises.push((async () => {
+            try {
+              const refinedResults = await refineBatch(itemsToRefine);
+              const refineMap = new Map<number, string>();
+              refinedResults.forEach(res => {
+                refineMap.set(res.id, res.translatedText);
+              });
+
+              currentBatchIndices.forEach(originalIdx => {
+                const item = updatedSubtitles[originalIdx];
+                if (!item) return;
+
+                const itemIndex = item.index || (originalIdx + 1);
+                const refined = refineMap.get(itemIndex);
+                if (refined !== undefined && refined.trim() !== '') {
+                  updatedSubtitles[originalIdx] = {
+                    ...item,
+                    translatedText: item.text.trim() === "" ? item.text : stripFormatting(refined)
+                  };
+                }
+              });
+            } catch (refineErr: any) {
+              console.warn("Pass 2 batch refinement warning, keeping Pass 1 translations:", refineErr);
+            }
+          })());
+        }
+
+        await Promise.all(refineBatchPromises);
+        setSubtitles([...updatedSubtitles]);
+        completedRefineSteps += Math.min(batchSize * concurrency, indices.length - i);
+        const pass2Progress = 50 + Math.round((completedRefineSteps / totalSteps) * 50);
+        setProgress(Math.min(100, pass2Progress));
+        setStatus({
+          type: 'info',
+          message: `Pass 2/2 (Refine): Polished ${completedRefineSteps}/${totalSteps} subtitles (SOV, natural phrasing, RTL)...`
+        });
+
+        if (i + batchSize * concurrency < indices.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
 
       setProgress(100);
-      setStatus({ type: 'success', message: 'Process complete!' });
+      setStatus({ type: 'success', message: `2-Pass Pipeline complete! Successfully translated and refined all ${totalSteps} subtitles.` });
       playDing();
       
       setShowFinishedMessage(true);
