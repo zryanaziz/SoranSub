@@ -598,13 +598,30 @@ export default function App() {
 
   const handleSelectMkvTrack = async (trackNumber: number) => {
     if (!mkvFile) return;
+
+    const selectedTrack = mkvTracks.find(t => t.number === trackNumber);
+    if (selectedTrack && selectedTrack.isTextSubtitle === false) {
+      setStatus({ 
+        type: 'error', 
+        message: `Track ${trackNumber} is an image-based bitmap subtitle (${selectedTrack.codec}) and contains pictures rather than text. Please select a text subtitle track (such as SRT, UTF-8, or ASS).` 
+      });
+      return;
+    }
     
     setIsExtractingMkv(true);
+    setProgress(5);
     setStatus({ type: 'info', message: 'Extracting subtitles from MKV...' });
     setShowTrackSelector(false);
     
     try {
-      const mkvSubs = await extractMKVSubtitle(mkvFile, trackNumber);
+      const mkvSubs = await extractMKVSubtitle(mkvFile, trackNumber, (pct) => {
+        setProgress(pct);
+      });
+
+      if (!mkvSubs || mkvSubs.length === 0) {
+        throw new Error(`No subtitle dialogue lines were found in Track ${trackNumber}. The track may be empty or in an unsupported format.`);
+      }
+
       const srtContent = mkvSubtitlesToSRT(mkvSubs);
       
       const track = mkvTracks.find(t => t.number === trackNumber);
@@ -615,12 +632,14 @@ export default function App() {
       setSubtitles(parsed);
       setSelectedIndex(parsed.length > 0 ? 0 : null);
       
-      setStatus({ type: 'success', message: `Extracted ${parsed.length} subtitles from MKV.` });
-    } catch (err) {
+      setStatus({ type: 'success', message: `Successfully extracted ${parsed.length} subtitles from MKV Track ${trackNumber}.` });
+    } catch (err: any) {
        console.error("MKV extraction error:", err);
-       setStatus({ type: 'error', message: 'Failed to extract subtitles from MKV.' });
+       const errorMsg = err?.message || 'Failed to extract subtitles from MKV.';
+       setStatus({ type: 'error', message: errorMsg });
     } finally {
       setIsExtractingMkv(false);
+      setProgress(0);
       setMkvFile(null);
       setMkvTracks([]);
     }
@@ -998,21 +1017,39 @@ export default function App() {
               </p>
               
               <div className="max-h-[300px] overflow-y-auto space-y-2 mb-6 pr-2 scrollbar-hide">
-                {mkvTracks.map((track) => (
-                  <button
-                    key={track.number}
-                    onClick={() => handleSelectMkvTrack(track.number)}
-                    className="w-full flex items-center justify-between p-3 border border-[#141414] border-opacity-10 hover:border-opacity-100 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all group"
-                  >
-                    <div className="text-left">
-                      <p className="text-xs font-bold font-mono">Track {track.number}: {track.name || 'Unnamed'}</p>
-                      <p className="text-[10px] opacity-60 group-hover:opacity-100 font-mono uppercase">
-                        {track.codec.replace('S_', '')} • {track.language || 'Unknown Language'}
-                      </p>
-                    </div>
-                    <ChevronRight size={16} />
-                  </button>
-                ))}
+                {mkvTracks.map((track) => {
+                  const isBitmap = track.isTextSubtitle === false;
+                  return (
+                    <button
+                      key={track.number}
+                      onClick={() => handleSelectMkvTrack(track.number)}
+                      className={`w-full flex items-center justify-between p-3 border border-[#141414] transition-all group ${
+                        isBitmap
+                          ? 'border-opacity-20 bg-amber-500/10 hover:bg-amber-500/20'
+                          : 'border-opacity-10 hover:border-opacity-100 hover:bg-[#141414] hover:text-[#E4E3E0]'
+                      }`}
+                    >
+                      <div className="text-left">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-bold font-mono">Track {track.number}: {track.name || 'Unnamed'}</p>
+                          {isBitmap ? (
+                            <span className="text-[9px] px-1.5 py-0.5 font-mono uppercase bg-amber-500/20 text-amber-900 dark:text-amber-300 border border-amber-500/40">
+                              Bitmap (Image)
+                            </span>
+                          ) : (
+                            <span className="text-[9px] px-1.5 py-0.5 font-mono uppercase bg-emerald-500/20 text-emerald-900 group-hover:text-emerald-300 border border-emerald-500/40">
+                              Text Subtitle
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] opacity-60 group-hover:opacity-100 font-mono uppercase mt-0.5">
+                          {track.codec.replace('S_', '')} • {track.language || 'Unknown Language'}
+                        </p>
+                      </div>
+                      <ChevronRight size={16} />
+                    </button>
+                  );
+                })}
               </div>
               
               <button 
