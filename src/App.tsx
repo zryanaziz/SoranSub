@@ -21,15 +21,24 @@ import {
   Clock,
   Type,
   ChevronRight,
-  FileText,
-  Eraser
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import { SubtitleItem } from './types';
-import { parseSRT, stringifySRT, parseSubtitle, shiftSubtitles, formatTime, stripFormatting, moveTrailingPunctuationToStart } from './lib/subtitle-utils';
+import { 
+  parseSRT, 
+  stringifySRT, 
+  parseSubtitle, 
+  shiftSubtitles, 
+  formatTime, 
+  stripFormatting, 
+  moveTrailingPunctuationToStart,
+  cleanAndFormatKurdishSubtitle,
+  cleanSourceSubtitle
+} from './lib/subtitle-utils';
 import { getMKVTracks, extractMKVSubtitle, mkvSubtitlesToSRT, MKVTrack } from './lib/mkv-utils';
 import { 
   translateToKurdishSorani, 
@@ -63,8 +72,8 @@ export default function App() {
   const [showRangeModal, setShowRangeModal] = useState(false);
   const [rangeFrom, setRangeFrom] = useState<string>('1');
   const [rangeTo, setRangeTo] = useState<string>('');
+  const [rangeSkipAlreadyTranslated, setRangeSkipAlreadyTranslated] = useState<boolean>(true);
   const [syncOffset, setSyncOffset] = useState('0');
-  const [selectedAction, setSelectedAction] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
   const [isDoublePassEnabled, setIsDoublePassEnabled] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -196,141 +205,6 @@ export default function App() {
     }
   };
 
-  const handleCleanUpSubtitles = () => {
-    if (subtitles.length === 0) return;
-    
-    // Improved SDH removal: Brackets, parentheses, and speaker tags like "NAME: "
-    const sdhRegex = /\[[^\]]*\]|\([^)]*\)|<[^>]*>|[♪♫\u266a\u266b]/gi;
-    const speakerRegex = /^[A-ZÀ-ÿ\s]+[:\-]\s+/gm;
-    
-    let tagCount = 0;
-    const initialCount = subtitles.length;
-
-    // Helper to clean original (source) subtitles:
-    // Strips SDH tags and speaker labels, cleans up excessive whitespace,
-    // but strictly PRESERVES all original punctuation (commas, dots, question marks, exclamation marks, etc.)
-    const cleanOriginalText = (str: string) => {
-      if (!str) return str;
-      let s = str.replace(sdhRegex, '').replace(speakerRegex, '');
-      s = s.split('\n')
-        .map(line => line.replace(/[ \t]+/g, ' ').trim())
-        .filter(line => line.length > 0)
-        .join('\n')
-        .trim();
-      return s;
-    };
-
-    // Helper for character swapping - specifically for Kurdish Sorani requirements on translated text
-    const swapSymbols = (str: string) => {
-      if (!str) return str;
-      let s = str.trim();
-
-      // REMOVAL: Remove hyphens, dashes and edge punctuation from start/end of lines, but KEEP triple dots (...) and unicode ellipsis (…)
-      s = s.split('\n').map(line => {
-        let l = line.trim();
-        // Remove leading hyphens/dashes before ellipsis if any (e.g. "- ...Hello" -> "...Hello")
-        l = l.replace(/^[-–—\s]+(?=\.\.\.|…)/, '');
-        
-        // Protect triple dots (...) and unicode ellipsis (…) with placeholder
-        l = l.replace(/\.\.\.|…/g, '___ELLIPSIS___');
-        
-        // Remove edge symbols (hyphens, dashes, commas, semicolons, exclamations, single periods) from start/end
-        l = l.replace(/^[-–—.,!،؛\s]+|[-–—.,!،؛\s]+$/g, '');
-        
-        // Restore ellipsis
-        l = l.replace(/___ELLIPSIS___/g, '...');
-        
-        return l.trim();
-      }).filter(line => line.length > 0).join('\n').trim();
-      if (!s) return "";
-
-      // Detect if the string contains Kurdish/Arabic characters
-      const hasArabicChars = /[\u0600-\u06FF]/.test(s);
-      
-      if (hasArabicChars) {
-        // Convert ? to Kurdish variant
-        s = s.replace(/\?/g, '؟');
-
-        // Move trailing punctuation (., ,, ،, ..., ?, ؟, !, ;, ؛) to the start of the line for RTL player compatibility
-        s = moveTrailingPunctuationToStart(s);
-
-        // Mirror brackets (The actual "Symbol Swap" for RTL/LTR compatibility)
-        const mirrorMap: Record<string, string> = {
-          '(': ')',
-          ')': '(',
-          '[': ']',
-          ']': '[',
-          '{': '}',
-          '}': '{',
-          '<': '>',
-          '>': '<',
-          '«': '»',
-          '»': '«'
-        };
-        
-        let mirrored = "";
-        for (let i = 0; i < s.length; i++) {
-          mirrored += mirrorMap[s[i]] || s[i];
-        }
-        s = mirrored;
-      }
-      
-      return s;
-    };
-
-    // Step 1: Strip tags and preserve original punctuation
-    const step1 = subtitles.map(item => {
-      // Clean original text: strip SDH markers & speaker names without removing comma, dot, or ?
-      let newText = cleanOriginalText(item.text);
-
-      // Clean translated text: strip SDH markers & format Kurdish RTL symbols
-      let newTranslated = item.translatedText 
-        ? swapSymbols(item.translatedText.replace(sdhRegex, '').replace(speakerRegex, '').replace(/[ \t]+/g, ' ').trim())
-        : null;
-
-      // If the text becomes empty after stripping tags, we pad with a space 
-      // to keep the block "alive" and valid for subtitle players/editors.
-      if (!newText) newText = " ";
-      if (newTranslated === "") newTranslated = " ";
-
-      if (newText !== item.text || newTranslated !== item.translatedText) {
-        tagCount++;
-      }
-      return { ...item, text: newText, translatedText: newTranslated };
-    });
-
-    // handleCleanUpSubtitles logic updated to keep all items
-    const final = step1;
-    // No re-indexing or filtering used, so indices and empty blocks stay as they were!
-
-    // Find the new index of the previously selected item to keep selection stable
-    let newSelectedIndex = selectedIndex;
-    if (selectedIndex !== null) {
-      const selectedId = subtitles[selectedIndex]?.id;
-      if (selectedId) {
-        const foundIdx = final.findIndex(s => s.id === selectedId);
-        if (foundIdx !== -1) newSelectedIndex = foundIdx;
-      }
-    }
-
-    setSubtitles(final);
-    if (newSelectedIndex !== null) setSelectedIndex(newSelectedIndex);
-    
-    setStatus({ 
-      type: 'success', 
-      message: `Clean Up: SDH & tags stripped from ${tagCount} blocks. All ${final.length} blocks processed.` 
-    });
-  };
-
-  const handleGo = () => {
-    switch (selectedAction) {
-      case 'sync': setShowSyncModal(true); break;
-      case 'cleanUp': handleCleanUpSubtitles(); break;
-      default: break;
-    }
-    setSelectedAction('');
-  };
-
   const handleTranslateRefineRange = () => {
     const from = parseInt(rangeFrom);
     const to = parseInt(rangeTo || subtitles.length.toString());
@@ -345,7 +219,28 @@ export default function App() {
       indices.push(i);
     }
 
-    handleProcessSubtitles(indices, isDoublePassEnabled);
+    const indicesToProcess = rangeSkipAlreadyTranslated
+      ? indices.filter(idx => !subtitles[idx].translatedText || subtitles[idx].translatedText.trim() === '')
+      : indices;
+
+    if (indicesToProcess.length === 0) {
+      setStatus({ 
+        type: 'info', 
+        message: `All blocks in range ${from}–${to} are already translated! Skipping to avoid duplicate processing.` 
+      });
+      setShowRangeModal(false);
+      return;
+    }
+
+    if (rangeSkipAlreadyTranslated && indicesToProcess.length < indices.length) {
+      const skipped = indices.length - indicesToProcess.length;
+      setStatus({
+        type: 'info',
+        message: `Processing ${indicesToProcess.length} blocks in range ${from}–${to} (${skipped} already translated & skipped)...`
+      });
+    }
+
+    handleProcessSubtitles(indicesToProcess, isDoublePassEnabled);
     setShowRangeModal(false);
   };
 
@@ -667,6 +562,18 @@ export default function App() {
     const totalSteps = indices.length;
     
     try {
+      // Strips SDH & Speaker Tags: Residual bracketed markers ([Applause], [Music]), parentheses ((Sighs), (Crying)), HTML tags (<i>, <b>, <font...>), music notes (♪, ♫), and speaker tags (NAME:, JOHN:) from source text, strictly preserving original punctuation.
+      indices.forEach(idx => {
+        const item = updatedSubtitles[idx];
+        if (item && item.text) {
+          const cleaned = cleanSourceSubtitle(item.text);
+          if (cleaned && cleaned !== item.text) {
+            updatedSubtitles[idx] = { ...item, text: cleaned };
+          }
+        }
+      });
+      setSubtitles([...updatedSubtitles]);
+
       // =========================================================================
       // PASS 1: TRANSLATE FIRST (Complete translation across all requested items)
       // =========================================================================
@@ -687,8 +594,8 @@ export default function App() {
           const endIdx = Math.min(startIdx + batchSize, indices.length);
           const currentBatchIndices = indices.slice(startIdx, endIdx);
           const itemsToTranslate = currentBatchIndices.map(idx => ({
-            id: subtitles[idx].index || (idx + 1),
-            text: subtitles[idx].text
+            id: updatedSubtitles[idx].index || (idx + 1),
+            text: updatedSubtitles[idx].text
           }));
           
           batchPromises.push((async () => {
@@ -837,6 +744,18 @@ export default function App() {
 
       // If user selected 1-Pass mode (no refinement), finish here
       if (!shouldRefine) {
+        // Enforce all 6 Kurdish formatting rules across processed blocks
+        indices.forEach(idx => {
+          const item = updatedSubtitles[idx];
+          if (item && item.translatedText && item.translatedText.trim()) {
+            updatedSubtitles[idx] = {
+              ...item,
+              translatedText: cleanAndFormatKurdishSubtitle(item.translatedText)
+            };
+          }
+        });
+        setSubtitles([...updatedSubtitles]);
+
         setProgress(100);
         setStatus({ type: 'success', message: `Translation complete! All ${totalSteps} subtitles translated.` });
         playDing();
@@ -921,6 +840,18 @@ export default function App() {
         }
       }
 
+      // Enforce all 6 Kurdish formatting rules across all processed blocks
+      indices.forEach(idx => {
+        const item = updatedSubtitles[idx];
+        if (item && item.translatedText && item.translatedText.trim()) {
+          updatedSubtitles[idx] = {
+            ...item,
+            translatedText: cleanAndFormatKurdishSubtitle(item.translatedText)
+          };
+        }
+      });
+      setSubtitles([...updatedSubtitles]);
+
       setProgress(100);
       setStatus({ type: 'success', message: `2-Pass Pipeline complete! Successfully translated and refined all ${totalSteps} subtitles.` });
       playDing();
@@ -938,9 +869,36 @@ export default function App() {
     }
   };
 
-  const handleTranslateAll = () => {
-    const indices = Array.from({ length: subtitles.length }, (_, i) => i);
-    handleProcessSubtitles(indices, isDoublePassEnabled);
+  const handleTranslateAll = (forceAll: boolean = false) => {
+    if (subtitles.length === 0) return;
+
+    // Filter to only those subtitle indices that haven't been translated yet
+    const untranslatedIndices = subtitles
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => !item.translatedText || item.translatedText.trim() === '')
+      .map(({ index }) => index);
+
+    if (untranslatedIndices.length === 0 && !forceAll) {
+      setStatus({ 
+        type: 'info', 
+        message: `All ${subtitles.length} subtitles have already been translated and refined! Skipping to prevent duplicate processing.` 
+      });
+      return;
+    }
+
+    const indicesToProcess = forceAll 
+      ? Array.from({ length: subtitles.length }, (_, i) => i)
+      : untranslatedIndices;
+
+    if (!forceAll && untranslatedIndices.length < subtitles.length) {
+      const alreadyDone = subtitles.length - untranslatedIndices.length;
+      setStatus({
+        type: 'info',
+        message: `Translating remaining ${untranslatedIndices.length} subtitles (${alreadyDone} already completed & skipped)...`
+      });
+    }
+
+    handleProcessSubtitles(indicesToProcess, isDoublePassEnabled);
   };
   
   const handleReTranslateBlock = async () => {
@@ -1318,23 +1276,22 @@ export default function App() {
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
           <button 
-            onClick={handleCleanUpSubtitles}
-            disabled={subtitles.length === 0}
-            className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors disabled:opacity-30"
-            title="Master Clean Up (Tags & Symbols)"
-          >
-            <Eraser size={14} />
-          </button>
-
-          <button 
-            onClick={handleTranslateAll}
+            onClick={(e) => handleTranslateAll(e.shiftKey)}
             disabled={isTranslating || subtitles.length === 0}
             className={cn(
               "flex items-center justify-center p-1.5 md:p-2 border border-[#141414] transition-all",
               "hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:cursor-not-allowed",
               isTranslating && "bg-[#141414] text-[#E4E3E0]"
             )}
-            title="Translate & Refine All"
+            title={
+              subtitles.length === 0
+                ? "Translate & Refine All"
+                : translatedCount === subtitles.length
+                ? `All ${subtitles.length} subtitles translated & refined (Nothing to do - won't do twice. Shift-click to force)`
+                : translatedCount > 0
+                ? `Translate & Refine remaining ${subtitles.length - translatedCount} subtitles (${translatedCount} already completed & skipped)`
+                : "Translate & Refine All"
+            }
           >
             {isTranslating ? (
               <div className="flex items-center gap-1">
@@ -1657,6 +1614,19 @@ export default function App() {
                       className="w-full bg-transparent border-b border-[#141414] text-lg font-mono focus:outline-none"
                     />
                   </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <input
+                    type="checkbox"
+                    id="rangeSkipAlreadyTranslated"
+                    checked={rangeSkipAlreadyTranslated}
+                    onChange={(e) => setRangeSkipAlreadyTranslated(e.target.checked)}
+                    className="accent-[#141414] w-4 h-4 cursor-pointer"
+                  />
+                  <label htmlFor="rangeSkipAlreadyTranslated" className="text-xs font-mono uppercase tracking-wider cursor-pointer select-none opacity-80 hover:opacity-100">
+                    Skip already translated blocks
+                  </label>
                 </div>
               </div>
 

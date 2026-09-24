@@ -191,7 +191,10 @@ export function parseSubtitle(content: string, fileName: string): SubtitleItem[]
 export function stringifySRT(items: SubtitleItem[], useTranslation = false): string {
   return items
     .map((item) => {
-      const text = useTranslation ? (item.translatedText || item.text) : item.text;
+      let text = useTranslation ? (item.translatedText || item.text) : item.text;
+      if (useTranslation && item.translatedText) {
+        text = cleanAndFormatKurdishSubtitle(item.translatedText);
+      }
       // Use original item.index as requested
       return `${item.index}\n${item.startTime} --> ${item.endTime}\n${text}\n`;
     })
@@ -237,59 +240,152 @@ export function shiftSubtitles(items: SubtitleItem[], offsetSeconds: number): Su
   });
 }
 
-export function moveTrailingPunctuationToStart(text: string): string {
-  if (!text) return text;
-  return text
-    .split('\n')
+/**
+ * Strips SDH tags and speaker labels for source (original) subtitles,
+ * strictly preserving original punctuation (commas, periods, questions, etc.).
+ */
+export function cleanSourceSubtitle(text: string): string {
+  if (!text) return "";
+  const sdhRegex = /\[[^\]]*\]|\([^)]*\)|<[^>]*>|[♪♫\u266a\u266b]/gi;
+  const speakerRegex = /^([A-ZÀ-ÿ\s]{2,}|[A-Za-zÀ-ÿ]{2,20})[:\-]\s+/gm;
+  
+  let s = text.replace(sdhRegex, '').replace(speakerRegex, '');
+  return s.split('\n')
     .map(line => {
-      let l = line.trim();
-      if (!l) return l;
-
-      // Revert leading question marks (? or ؟) back to the end of the line
-      const leadingQuestion = l.match(/^([\?\؟]+)/);
-      if (leadingQuestion) {
-        const qMark = leadingQuestion[0];
-        l = l.slice(qMark.length).trimStart() + qMark;
-      }
-
-      // Extract trailing punctuation at the end of the line (except ? and ؟)
-      let trailingPunct = '';
-      const matchPunct = l.match(/(?:\.\.\.|…|[\.\,\،\!\;\؛\:])+$/);
-      if (matchPunct) {
-        trailingPunct = matchPunct[0];
-        l = l.slice(0, l.length - trailingPunct.length).trimEnd();
-      }
-
-      // If a line STARTS with numbers or number expressions (e.g. "100 years", "100 ساڵ", "10 مانگ", "100"):
-      // Move leading number/phrase to the end of the line so RTL video players render it at the visual start (right side).
-      const numMatch = l.match(/^((?:[0-9]+|[٠-٩]+)(?:\.[0-9]+)?(?:\s+\S+)?)\s+(.+)$/);
-      if (numMatch) {
-        const numPart = numMatch[1].trim();
-        const restPart = numMatch[2].trim();
-        if (numPart && restPart) {
-          l = `${restPart} ${numPart}`;
-        }
-      }
-
-      // Re-attach trailing punctuation to the absolute START of the line for RTL player compatibility
-      if (trailingPunct) {
-        return `${trailingPunct}${l}`;
-      }
+      let l = line.replace(/[ \t]+/g, ' ').trim();
       return l;
     })
-    .join('\n');
+    .filter(line => line.length > 0)
+    .join('\n')
+    .trim();
+}
+
+/**
+ * Universal formatter and sanitizer for Kurdish Sorani subtitles.
+ * 
+ * Rules enforced:
+ * 1. Strips SDH & Speaker Tags: Removes any residual bracketed text, parentheses, or HTML tags.
+ * 2. Removes Dialogue Hyphens / Edge Symbols: Cleans up leading dialogue dashes (e.g., - سڵاو → سڵاو), while protecting ellipsis (... and …).
+ * 3. Kurdish Question Marks: Converts Latin ? to Kurdish ؟.
+ * 4. RTL Trailing Punctuation Positioning: Moves trailing punctuation (periods ., commas ،, exclamation !, ellipsis ...) to visual position required by RTL video players (VLC, MPV, Web players). Question marks (؟) remain at natural sentence end.
+ * 5. Leading Numbers & Expressions: In lines starting with numbers (e.g., 100 ساڵ or 10 مانگ), adjusts positioning so RTL video players display number visually at beginning of sentence on screen.
+ * 6. Bracket Mirroring (RTL Symmetry): Inverts bracket directions (( ↔ ), [ ↔ ], « ↔ », { ↔ }) so RTL players render them facing correct direction.
+ */
+export function cleanAndFormatKurdishSubtitle(text: string): string {
+  if (!text) return "";
+
+  // Convert literal newlines or break tags into actual newlines
+  let cleanText = text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
+
+  // Rule 1: Strips SDH & Speaker Tags
+  // Remove bracketed SDH tags e.g. [Applause], [Music], [دەنگی دەرگا]
+  cleanText = cleanText.replace(/\[[^\]]*\]/g, '');
+  // Remove parenthetical SDH tags e.g. (Crying), (Sighs), (پێکەنین)
+  cleanText = cleanText.replace(/\([^)]*\)/g, '');
+  // Remove HTML tags e.g. <i>, <b>, <font color="...">
+  cleanText = cleanText.replace(/<[^>]*>/g, '');
+  // Remove music notes
+  cleanText = cleanText.replace(/[♪♫\u266a\u266b]/g, '');
+  // Remove speaker prefixes like "NAME: " or "ناوی کەس: "
+  cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF\s]{1,25})[:\-]\s+/gm, '');
+
+  const lines = cleanText.split('\n');
+  const formattedLines = lines.map(line => {
+    let l = line.replace(/[ \t]+/g, ' ').trim();
+    if (!l) return '';
+
+    // Remove any line-level speaker tag remaining
+    l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF\s]{1,25})[:\-]\s+/, '');
+
+    // Rule 2: Removes Dialogue Hyphens / Edge Symbols while protecting ellipsis (... and …)
+    // Protect ellipsis first
+    l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
+    l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
+
+    // Remove leading dialogue dashes/hyphens: e.g. - سڵاو -> سڵاو, – سڵاو -> سڵاو, — سڵاو -> سڵاو
+    l = l.replace(/^[-–—\s]+/, '');
+
+    // Remove dangling hyphens/dashes or edge punctuation at line start/end (except protected ellipsis)
+    l = l.replace(/^[-–—;؛\s]+/, '');
+    l = l.replace(/[-–—\s]+$/, '');
+
+    // Restore ellipsis
+    l = l.replace(/___ELLIPSIS_THREE___/g, '...');
+    l = l.replace(/___ELLIPSIS_UNICODE___/g, '…');
+
+    l = l.trim();
+    if (!l) return '';
+
+    // Rule 3: Kurdish Question Marks (Latin ? -> Kurdish ؟) & punctuation normalization
+    l = l.replace(/\?/g, '؟');
+    l = l.replace(/;/g, '؛');
+    l = l.replace(/(^|[^\d]),([^\d]|$)/g, '$1،$2');
+
+    // Rule 4: RTL Trailing Punctuation Positioning
+    // Question marks (؟) remain at the natural sentence end.
+    // If a question mark was placed at the very start of the line, move it to the end:
+    const leadingQuestion = l.match(/^([\؟]+)/);
+    if (leadingQuestion) {
+      const qMark = leadingQuestion[0];
+      l = l.slice(qMark.length).trimStart() + qMark;
+    }
+
+    // Extract trailing punctuation at the end of the line (except ? and ؟)
+    let trailingPunct = '';
+    const matchPunct = l.match(/(?:\.\.\.|…|[\.\,\،\!\;\؛\:])+$/);
+    if (matchPunct) {
+      trailingPunct = matchPunct[0];
+      l = l.slice(0, l.length - trailingPunct.length).trimEnd();
+    }
+
+    // Rule 5: Leading Numbers & Expressions
+    // In lines starting with numbers (e.g., 100 ساڵ or 10 مانگ or 100), adjust positioning for RTL players
+    // Move leading number/phrase to end of the line so RTL video players display it at visual start.
+    const numMatch = l.match(/^((?:[0-9]+|[٠-٩]+)(?:\.[0-9]+)?(?:\s+(?:ساڵ|مانگ|ڕۆژ|رۆژ|کەس|کاتژمێر|دەقە|چرکە|خولەک|جار|دانە|سەد|هەزار|ملیۆن|ملیار|دۆلار|پاوەند|یۆرۆ|مەتر|کیلۆمەتر|سم|کیلۆ|لەمەوبەر|years?|months?|days?|hours?|mins?|minutes?|secs?|seconds?|[^\s0-9.,!؟،؛]{1,15}))?)\s+(.+)$/);
+    if (numMatch) {
+      const numPart = numMatch[1].trim();
+      const restPart = numMatch[2].trim();
+      if (numPart && restPart) {
+        l = `${restPart} ${numPart}`;
+      }
+    }
+
+    // Re-attach trailing punctuation to the visual start (left) of the line for RTL player compatibility
+    if (trailingPunct) {
+      l = `${trailingPunct}${l}`;
+    }
+
+    // Rule 6: Bracket Mirroring (RTL Symmetry)
+    // Invert bracket directions (( ↔ ), [ ↔ ], « ↔ », { ↔ }) for correct RTL player rendering
+    const mirrorMap: Record<string, string> = {
+      '(': ')',
+      ')': '(',
+      '[': ']',
+      ']': '[',
+      '{': '}',
+      '}': '{',
+      '<': '>',
+      '>': '<',
+      '«': '»',
+      '»': '«'
+    };
+
+    let mirrored = '';
+    for (let i = 0; i < l.length; i++) {
+      mirrored += mirrorMap[l[i]] || l[i];
+    }
+    l = mirrored;
+
+    return l.trim();
+  }).filter(line => line.length > 0);
+
+  return formattedLines.join('\n');
+}
+
+export function moveTrailingPunctuationToStart(text: string): string {
+  return cleanAndFormatKurdishSubtitle(text);
 }
 
 export function stripFormatting(text: string): string {
-  if (!text) return "";
-  // Convert literal \N, \n, /N, /n, and <br> variants to actual newlines
-  let cleanText = text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
-  // Removes HTML-like tags (e.g. <font color="...">, <i>, <b>)
-  cleanText = cleanText.replace(/<[^>]*>/g, '');
-  // Normalize newlines: strip duplicate empty lines to prevent SRT block splitting
-  cleanText = cleanText.split('\n')
-                       .map(line => line.trim())
-                       .filter(line => line.length > 0)
-                       .join('\n');
-  return cleanText;
+  return cleanAndFormatKurdishSubtitle(text);
 }
