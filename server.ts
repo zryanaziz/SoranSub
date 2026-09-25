@@ -7,105 +7,15 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-function cleanAndFormatKurdishSubtitle(text: string): string {
-  if (!text) return "";
+import { 
+  cleanAndFormatKurdishSubtitle, 
+  cleanKurdishSubtitle, 
+  cleanSourceSubtitle, 
+  moveTrailingPunctuationToStart, 
+  hasAlreadyMirroredBrackets 
+} from "./src/lib/subtitle-utils";
 
-  // Convert literal newlines or break tags into actual newlines
-  let cleanText = text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
-
-  // Rule 1: Strips SDH & Speaker Tags
-  cleanText = cleanText.replace(/\[[^\]]*\]/g, '');
-  cleanText = cleanText.replace(/\([^)]*\)/g, '');
-  cleanText = cleanText.replace(/<[^>]*>/g, '');
-  cleanText = cleanText.replace(/[♪♫\u266a\u266b]/g, '');
-  cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF\s]{1,25})[:\-]\s+/gm, '');
-
-  const lines = cleanText.split('\n');
-  const formattedLines = lines.map(line => {
-    let l = line.replace(/[ \t]+/g, ' ').trim();
-    if (!l) return '';
-
-    // Remove any line-level speaker tag remaining
-    l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF\s]{1,25})[:\-]\s+/, '');
-
-    // Rule 2: Removes Dialogue Hyphens / Edge Symbols while protecting ellipsis (... and …)
-    l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
-    l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
-
-    l = l.replace(/^[-–—\s]+/, '');
-    l = l.replace(/^[-–—;؛\s]+/, '');
-    l = l.replace(/[-–—\s]+$/, '');
-
-    l = l.replace(/___ELLIPSIS_THREE___/g, '...');
-    l = l.replace(/___ELLIPSIS_UNICODE___/g, '…');
-
-    l = l.trim();
-    if (!l) return '';
-
-    // Rule 3: Kurdish Question Marks (Latin ? -> Kurdish ؟) & punctuation normalization
-    l = l.replace(/\?/g, '؟');
-    l = l.replace(/;/g, '؛');
-    l = l.replace(/(^|[^\d]),([^\d]|$)/g, '$1،$2');
-
-    // Rule 4: RTL Trailing Punctuation Positioning
-    const leadingQuestion = l.match(/^([\؟]+)/);
-    if (leadingQuestion) {
-      const qMark = leadingQuestion[0];
-      l = l.slice(qMark.length).trimStart() + qMark;
-    }
-
-    let trailingPunct = '';
-    const matchPunct = l.match(/(?:\.\.\.|…|[\.\,\،\!\;\؛\:])+$/);
-    if (matchPunct) {
-      trailingPunct = matchPunct[0];
-      l = l.slice(0, l.length - trailingPunct.length).trimEnd();
-    }
-
-    // Rule 5: Leading Numbers & Expressions
-    const numMatch = l.match(/^((?:[0-9]+|[٠-٩]+)(?:\.[0-9]+)?(?:\s+(?:ساڵ|مانگ|ڕۆژ|رۆژ|کەس|کاتژمێر|دەقە|چرکە|خولەک|جار|دانە|سەد|هەزار|ملیۆن|ملیار|دۆلار|پاوەند|یۆرۆ|مەتر|کیلۆمەتر|سم|کیلۆ|لەمەوبەر|years?|months?|days?|hours?|mins?|minutes?|secs?|seconds?|[^\s0-9.,!؟،؛]{1,15}))?)\s+(.+)$/);
-    if (numMatch) {
-      const numPart = numMatch[1].trim();
-      const restPart = numMatch[2].trim();
-      if (numPart && restPart) {
-        l = `${restPart} ${numPart}`;
-      }
-    }
-
-    if (trailingPunct) {
-      l = `${trailingPunct}${l}`;
-    }
-
-    // Rule 6: Bracket Mirroring (RTL Symmetry)
-    const mirrorMap: Record<string, string> = {
-      '(': ')',
-      ')': '(',
-      '[': ']',
-      ']': '[',
-      '{': '}',
-      '}': '{',
-      '<': '>',
-      '>': '<',
-      '«': '»',
-      '»': '«'
-    };
-
-    let mirrored = '';
-    for (let i = 0; i < l.length; i++) {
-      mirrored += mirrorMap[l[i]] || l[i];
-    }
-    l = mirrored;
-
-    return l.trim();
-  }).filter(line => line.length > 0);
-
-  return formattedLines.join('\n');
-}
-
-function moveTrailingPunctuationToStart(text: string): string {
-  return cleanAndFormatKurdishSubtitle(text);
-}
-
-const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator and subtitle localization expert. Your absolute priority is to translate the input text into highly natural, idiomatic, flowing, and professional Sorani Kurdish as spoken in daily life, avoiding stiff, robotic, or literal word-for-word translations.\n\nCRITICAL Kurdish Sorani Localization Rules:\n1. GRAMMAR & WORD ORDER: Sorani Kurdish is strictly a Subject-Object-Verb (SOV) language. Restructure English sentences completely so that the verb is naturally placed at the end of the sentence or clause. Never keep English SVO structure.\n2. NATURAL IDIOMATIC PHRASING (NO LITERALISM): Convert English colloquialisms and idioms into their closest cultural equivalents in natural Sorani Kurdish. For example:\n   - 'Are you kidding me?' -> 'شۆخی دەکەیت؟' or 'گاڵتە دەکەیت؟' (NEVER 'ئایا تۆ لەگەڵ مندا گاڵتە دەکەیت؟')\n   - 'What's up?' -> 'چی هەیە؟' or 'بارودۆخ چۆنە؟'\n   - 'Oh my God!' -> 'خوایە گیان!' or 'ئەی خوایە!'\n   - 'Don't worry' -> 'نیگەران مەبە' or 'خەمت نەبێت'\n   - 'Shut up!' -> 'بێدەنگ بە!' or 'دەمت داخە!'\n   - 'Come on!' -> 'دەی!' or 'خێراکە!'\n3. PUNCTUATION & NUMBER FORMATTING FOR RTL PLAYER COMPATIBILITY: Sorani is written Right-to-Left (RTL). Kurdish-specific punctuation MUST be used (e.g., '؟' for question mark, '،' for comma, '؛' for semicolon). CRITICAL FOR PLAYER COMPATIBILITY:\n   a) Punctuation: If a sentence or line ends with punctuation marks such as ',', '،', '.', '...', '!', '؛', move that punctuation mark to the ABSOLUTE START of the Kurdish line (e.g. '.سڵاو' instead of 'سڵاو.'). Question marks ('?' or '؟') MUST remain at the end of the sentence/line (e.g. 'چۆنیت؟').\n   b) Numbers / Year / Month Expressions: If a sentence or line STARTS with numbers or number expressions (e.g., '100 years' -> '100 ساڵ', '10 months' -> '10 مانگ', '100', '10', '100 ساڵ لەمەوبەر'), move that leading number or number phrase (e.g. '100 ساڵ' or '10 مانگ' or '100') to the ABSOLUTE END of the Kurdish line (e.g. 'لەمەوبەر 100 ساڵ' or 'لەمەوبەر 100'). This ensures that on RTL video players, the numbers display visually at the START of the sentence on screen.\n4. ABBREVIATIONS: Smoothly transliterate English abbreviations (e.g., CIA, FBI, NASA, IT, AI) into phonetic Kurdish characters based on their spoken pronunciation (e.g., 'FBI' -> 'ئێف بی ئای', 'CIA' -> 'سی ئای ئەی', 'AI' -> 'ئەی ئای', 'TV' -> 'تی ڤی') instead of leaving them in English.\n5. SUBTITLE CONCISENESS: Subtitles need to be brief and easy to read in a short timeframe. Keep translation punchy, concise, and natural, keeping screen space and display speed in mind.\n6. LINE BREAKS: The '<br>' tag is a placeholder for a line break or newline. You MUST preserve '<br>' exactly in the output, properly integrated into the natural flow of the translated sentence. Do NOT delete or translate '<br>'.\n7. OUTPUT ONLY: Return ONLY the translated Sorani Kurdish text, completely clean of explanations, note prefixes, or quotes.";
+const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator and subtitle localization expert. Your absolute priority is to translate the input text into highly natural, idiomatic, flowing, and professional Sorani Kurdish as spoken in daily life, avoiding stiff, robotic, or literal word-for-word translations.\n\nCRITICAL Kurdish Sorani Localization Rules:\n1. GRAMMAR & WORD ORDER: Sorani Kurdish is strictly a Subject-Object-Verb (SOV) language. Restructure English sentences completely so that the verb is naturally placed at the end of the sentence or clause. Never keep English SVO structure.\n2. NATURAL IDIOMATIC PHRASING (NO LITERALISM): Convert English colloquialisms and idioms into their closest cultural equivalents in natural Sorani Kurdish. For example:\n   - 'Are you kidding me?' -> 'شۆخی دەکەیت؟' or 'گاڵتە دەکەیت؟' (NEVER 'ئایا تۆ لەگەڵ مندا گاڵتە دەکەیت؟')\n   - 'What's up?' -> 'چی هەیە؟' or 'بارودۆخ چۆنە؟'\n   - 'Oh my God!' -> 'خوایە گیان!' or 'ئەی خوایە!'\n   - 'Don't worry' -> 'نیگەران مەبە' or 'خەمت نەبێت'\n   - 'Shut up!' -> 'بێدەنگ بە!' or 'دەمت داخە!'\n   - 'Come on!' -> 'دەی!' or 'خێراکە!'\n3. PUNCTUATION & SCRIPT: Sorani is written Right-to-Left (RTL). Always use authentic Kurdish-specific punctuation marks naturally (e.g., '؟' for question mark, '،' for comma, '؛' for semicolon).\n4. ABBREVIATIONS: Smoothly transliterate English abbreviations (e.g., CIA, FBI, NASA, IT, AI) into phonetic Kurdish characters based on their spoken pronunciation (e.g., 'FBI' -> 'ئێف بی ئای', 'CIA' -> 'سی ئای ئەی', 'AI' -> 'ئەی ئای', 'TV' -> 'تی ڤی') instead of leaving them in English.\n5. SUBTITLE CONCISENESS: Subtitles need to be brief and easy to read in a short timeframe. Keep translation punchy, concise, and natural, keeping screen space and display speed in mind.\n6. LINE BREAKS: The '<br>' tag is a placeholder for a line break or newline. You MUST preserve '<br>' exactly in the output, properly integrated into the natural flow of the translated sentence. Do NOT delete or translate '<br>'.\n7. OUTPUT ONLY: Return ONLY the translated Sorani Kurdish text, completely clean of explanations, note prefixes, or quotes.";
 
 const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
 const MODELS = [
@@ -443,7 +353,7 @@ async function startServer() {
           if (Array.isArray(result) && result.length === cleanedItems.length) {
             return result.map((item: any) => ({
               id: Number(item.id),
-              translatedText: moveTrailingPunctuationToStart(typeof item.translatedText === 'string' 
+              translatedText: cleanKurdishSubtitle(typeof item.translatedText === 'string' 
                 ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n') 
                 : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n'))
             }));
@@ -526,7 +436,7 @@ async function startServer() {
           if (Array.isArray(result) && result.length === cleanedItems.length) {
             return result.map((item: any) => ({
               id: Number(item.id),
-              translatedText: moveTrailingPunctuationToStart(typeof item.translatedText === 'string' 
+              translatedText: cleanKurdishSubtitle(typeof item.translatedText === 'string' 
                 ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n') 
                 : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n'))
             }));

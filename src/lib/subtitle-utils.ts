@@ -243,21 +243,130 @@ export function shiftSubtitles(items: SubtitleItem[], offsetSeconds: number): Su
 /**
  * Strips SDH tags and speaker labels for source (original) subtitles,
  * strictly preserving original punctuation (commas, periods, questions, etc.).
+ * Also removes leading dialogue dashes and edge symbols while protecting ellipsis (... and …).
  */
 export function cleanSourceSubtitle(text: string): string {
   if (!text) return "";
-  const sdhRegex = /\[[^\]]*\]|\([^)]*\)|<[^>]*>|[♪♫\u266a\u266b]/gi;
-  const speakerRegex = /^([A-ZÀ-ÿ\s]{2,}|[A-Za-zÀ-ÿ]{2,20})[:\-]\s+/gm;
-  
-  let s = text.replace(sdhRegex, '').replace(speakerRegex, '');
-  return s.split('\n')
-    .map(line => {
-      let l = line.replace(/[ \t]+/g, ' ').trim();
-      return l;
-    })
-    .filter(line => line.length > 0)
-    .join('\n')
-    .trim();
+
+  // Convert literal newlines or break tags into actual newlines
+  let cleanText = text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
+
+  // Strips residual bracketed markers ([Applause], [Music]), parentheses ((Sighs), (Crying)), HTML tags, music notes
+  cleanText = cleanText.replace(/\[[^\]]*\]/g, '');
+  cleanText = cleanText.replace(/\([^)]*\)/g, '');
+  cleanText = cleanText.replace(/<[^>]*>/g, '');
+  cleanText = cleanText.replace(/[♪♫\u266a\u266b]/g, '');
+
+  const lines = cleanText.split('\n');
+  const cleanedLines = lines.map(line => {
+    let l = line.replace(/[ \t]+/g, ' ').trim();
+    if (!l) return '';
+
+    // Strips speaker tags (e.g. "NAME:", "JOHN:", "SPEAKER 1:", "MAN - ")
+    l = l.replace(/^([A-Za-zÀ-ÿ0-9\s_\-\.]{1,30})[:\-]\s+/, '');
+
+    // Protect triple dots and unicode ellipsis
+    l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
+    l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
+
+    // Removes leading dialogue dashes (e.g., - Hello -> Hello)
+    l = l.replace(/^[-–—\s]+/, '');
+    // Removes dangling edge symbols while preserving internal punctuation
+    l = l.replace(/^[-–—\s]+/, '');
+    l = l.replace(/[-–—\s]+$/, '');
+
+    // Restore protected ellipsis
+    l = l.replace(/___ELLIPSIS_THREE___/g, '...');
+    l = l.replace(/___ELLIPSIS_UNICODE___/g, '…');
+
+    return l.trim();
+  }).filter(line => line.length > 0);
+
+  return cleanedLines.join('\n');
+}
+
+/**
+ * Checks if a string already has mirrored brackets (e.g., closing bracket appears before opening bracket).
+ */
+export function hasAlreadyMirroredBrackets(str: string): boolean {
+  const parenClose = str.indexOf(')');
+  const parenOpen = str.indexOf('(');
+  if (parenClose !== -1 && (parenOpen === -1 || parenClose < parenOpen)) {
+    return true;
+  }
+  const bracketClose = str.indexOf(']');
+  const bracketOpen = str.indexOf('[');
+  if (bracketClose !== -1 && (bracketOpen === -1 || bracketClose < bracketOpen)) {
+    return true;
+  }
+  const braceClose = str.indexOf('}');
+  const braceOpen = str.indexOf('{');
+  if (braceClose !== -1 && (braceOpen === -1 || braceClose < braceOpen)) {
+    return true;
+  }
+  const guillemetClose = str.indexOf('»');
+  const guillemetOpen = str.indexOf('«');
+  if (guillemetClose !== -1 && (guillemetOpen === -1 || guillemetClose < guillemetOpen)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Cleans Kurdish translated and refined lines:
+ * - Strips any residual bracketed markers ([Applause], [Music]), parentheses ((Sighs), (Crying)),
+ *   HTML tags (<i>, <b>), music notes (♪, ♫), and speaker tags (NAME:, JOHN:, etc.).
+ * - Removes leading dialogue dashes (e.g., - سڵاو → سڵاو) and dangling edge symbols,
+ *   while strictly protecting triple dots (...) and unicode ellipsis (…).
+ * - Converts Latin ? to Kurdish ؟, Latin ; to Kurdish ؛, comma between non-digits to Kurdish ،.
+ */
+export function cleanKurdishSubtitle(text: string): string {
+  if (!text) return "";
+
+  let cleanText = text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
+
+  // Strips residual tags (SDH markers, audio descriptions, HTML tags, music notes, speaker tags)
+  // Strips bracketed SDH markers e.g. [Applause], [Music], [Laughter], [مۆسیقا], [چەپڵە]
+  cleanText = cleanText.replace(/\[\s*(?:applause|music|laughter|gasp|sigh|groan|screams?|whisper|silence|cheering|sound|door|footsteps|cough|throat|[a-zA-Z\s_\-]{2,40}|مۆسیقا|چەپڵە|پێکەنین|هاوار|گریان|دەنگی\s+[^\s\]]+|بێدەنگی|سۆز|تاریکی)\s*\]/gi, '');
+  // Strips parenthetical SDH descriptions e.g. (Sighs), (Crying), (Laughs), (پێکەنین), (گریان)
+  cleanText = cleanText.replace(/\(\s*(?:sighs?|crying|snickers?|whispers?|laughter|chuckles?|gasps?|groans?|screams?|applause|music|singing|coughing|throat|in [a-zA-Z]+|speaking [a-zA-Z]+|[a-zA-Z\s_\-]{2,30}|مۆسیقا|چەپڵە|پێکەنین|هاوار|گریان|دەنگی\s+[^\s\)]+|بێدەنگی|سۆز|تاریکی|هەناسەبڕکێ)\s*\)/gi, '');
+  cleanText = cleanText.replace(/<[^>]*>/g, '');
+  cleanText = cleanText.replace(/[♪♫\u266a\u266b]/g, '');
+  cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/gm, '');
+
+  const lines = cleanText.split('\n');
+  const cleanedLines = lines.map(line => {
+    let l = line.replace(/[ \t]+/g, ' ').trim();
+    if (!l) return '';
+
+    // Line-level speaker prefix
+    l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/, '');
+
+    // Protect triple dots (...) and unicode ellipsis (…)
+    l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
+    l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
+
+    // Removes leading dialogue dashes (e.g., - سڵاو → سڵاو) and dangling edge symbols
+    l = l.replace(/^[-–—\s]+/, '');
+    l = l.replace(/^[-–—;؛\s]+/, '');
+    l = l.replace(/[-–—\s]+$/, '');
+
+    // Restore ellipsis
+    l = l.replace(/___ELLIPSIS_THREE___/g, '...');
+    l = l.replace(/___ELLIPSIS_UNICODE___/g, '…');
+
+    l = l.trim();
+    if (!l) return '';
+
+    // Kurdish Question Marks (Latin ? -> Kurdish ؟) & punctuation normalization
+    l = l.replace(/\?/g, '؟');
+    l = l.replace(/;/g, '؛');
+    l = l.replace(/(^|[^\d]),([^\d]|$)/g, '$1،$2');
+
+    return l.trim();
+  }).filter(line => line.length > 0);
+
+  return cleanedLines.join('\n');
 }
 
 /**
@@ -278,16 +387,16 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
   let cleanText = text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
 
   // Rule 1: Strips SDH & Speaker Tags
-  // Remove bracketed SDH tags e.g. [Applause], [Music], [دەنگی دەرگا]
-  cleanText = cleanText.replace(/\[[^\]]*\]/g, '');
-  // Remove parenthetical SDH tags e.g. (Crying), (Sighs), (پێکەنین)
-  cleanText = cleanText.replace(/\([^)]*\)/g, '');
+  // Strips bracketed SDH markers e.g. [Applause], [Music], [Laughter], [مۆسیقا], [چەپڵە]
+  cleanText = cleanText.replace(/\[\s*(?:applause|music|laughter|gasp|sigh|groan|screams?|whisper|silence|cheering|sound|door|footsteps|cough|throat|[a-zA-Z\s_\-]{2,40}|مۆسیقا|چەپڵە|پێکەنین|هاوار|گریان|دەنگی\s+[^\s\]]+|بێدەنگی|سۆز|تاریکی)\s*\]/gi, '');
+  // Strips parenthetical SDH descriptions e.g. (Sighs), (Crying), (Laughs), (پێکەنین), (گریان)
+  cleanText = cleanText.replace(/\(\s*(?:sighs?|crying|snickers?|whispers?|laughter|chuckles?|gasps?|groans?|screams?|applause|music|singing|coughing|throat|in [a-zA-Z]+|speaking [a-zA-Z]+|[a-zA-Z\s_\-]{2,30}|مۆسیقا|چەپڵە|پێکەنین|هاوار|گریان|دەنگی\s+[^\s\)]+|بێدەنگی|سۆز|تاریکی|هەناسەبڕکێ)\s*\)/gi, '');
   // Remove HTML tags e.g. <i>, <b>, <font color="...">
   cleanText = cleanText.replace(/<[^>]*>/g, '');
   // Remove music notes
   cleanText = cleanText.replace(/[♪♫\u266a\u266b]/g, '');
   // Remove speaker prefixes like "NAME: " or "ناوی کەس: "
-  cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF\s]{1,25})[:\-]\s+/gm, '');
+  cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/gm, '');
 
   const lines = cleanText.split('\n');
   const formattedLines = lines.map(line => {
@@ -295,7 +404,7 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
     if (!l) return '';
 
     // Remove any line-level speaker tag remaining
-    l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF\s]{1,25})[:\-]\s+/, '');
+    l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/, '');
 
     // Rule 2: Removes Dialogue Hyphens / Edge Symbols while protecting ellipsis (... and …)
     // Protect ellipsis first
@@ -321,6 +430,10 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
     l = l.replace(/;/g, '؛');
     l = l.replace(/(^|[^\d]),([^\d]|$)/g, '$1،$2');
 
+    // Check if line already starts with moved trailing punctuation (idempotency guard)
+    const alreadyMovedPunctMatch = l.match(/^([\.\,\،\!\;\؛]|\.\.\.|…)+/);
+    const hasAlreadyMovedPunct = Boolean(alreadyMovedPunctMatch);
+
     // Rule 4: RTL Trailing Punctuation Positioning
     // Question marks (؟) remain at the natural sentence end.
     // If a question mark was placed at the very start of the line, move it to the end:
@@ -333,7 +446,7 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
     // Extract trailing punctuation at the end of the line (except ? and ؟)
     let trailingPunct = '';
     const matchPunct = l.match(/(?:\.\.\.|…|[\.\,\،\!\;\؛\:])+$/);
-    if (matchPunct) {
+    if (matchPunct && !hasAlreadyMovedPunct) {
       trailingPunct = matchPunct[0];
       l = l.slice(0, l.length - trailingPunct.length).trimEnd();
     }
@@ -356,25 +469,27 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
     }
 
     // Rule 6: Bracket Mirroring (RTL Symmetry)
-    // Invert bracket directions (( ↔ ), [ ↔ ], « ↔ », { ↔ }) for correct RTL player rendering
-    const mirrorMap: Record<string, string> = {
-      '(': ')',
-      ')': '(',
-      '[': ']',
-      ']': '[',
-      '{': '}',
-      '}': '{',
-      '<': '>',
-      '>': '<',
-      '«': '»',
-      '»': '«'
-    };
+    // Invert bracket directions (( ↔ ), [ ↔ ], « ↔ », { ↔ }) so RTL players render them facing correct direction
+    if (!hasAlreadyMirroredBrackets(l)) {
+      const mirrorMap: Record<string, string> = {
+        '(': ')',
+        ')': '(',
+        '[': ']',
+        ']': '[',
+        '{': '}',
+        '}': '{',
+        '<': '>',
+        '>': '<',
+        '«': '»',
+        '»': '«'
+      };
 
-    let mirrored = '';
-    for (let i = 0; i < l.length; i++) {
-      mirrored += mirrorMap[l[i]] || l[i];
+      let mirrored = '';
+      for (let i = 0; i < l.length; i++) {
+        mirrored += mirrorMap[l[i]] || l[i];
+      }
+      l = mirrored;
     }
-    l = mirrored;
 
     return l.trim();
   }).filter(line => line.length > 0);

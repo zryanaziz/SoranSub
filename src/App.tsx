@@ -37,6 +37,7 @@ import {
   stripFormatting, 
   moveTrailingPunctuationToStart,
   cleanAndFormatKurdishSubtitle,
+  cleanKurdishSubtitle,
   cleanSourceSubtitle
 } from './lib/subtitle-utils';
 import { getMKVTracks, extractMKVSubtitle, mkvSubtitlesToSRT, MKVTrack } from './lib/mkv-utils';
@@ -563,11 +564,12 @@ export default function App() {
     
     try {
       // Strips SDH & Speaker Tags: Residual bracketed markers ([Applause], [Music]), parentheses ((Sighs), (Crying)), HTML tags (<i>, <b>, <font...>), music notes (♪, ♫), and speaker tags (NAME:, JOHN:) from source text, strictly preserving original punctuation.
+      // Removes Dialogue Hyphens & Edge Symbols: Leading dashes and edge symbols while strictly protecting triple dots (...) and unicode ellipsis (…).
       indices.forEach(idx => {
         const item = updatedSubtitles[idx];
         if (item && item.text) {
           const cleaned = cleanSourceSubtitle(item.text);
-          if (cleaned && cleaned !== item.text) {
+          if (cleaned !== item.text) {
             updatedSubtitles[idx] = { ...item, text: cleaned };
           }
         }
@@ -630,7 +632,7 @@ export default function App() {
                 } else {
                   updatedSubtitles[originalIdx] = {
                     ...originalItem,
-                    translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(translated)
+                    translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(translated)
                   };
                 }
               });
@@ -671,7 +673,7 @@ export default function App() {
                       } else {
                         updatedSubtitles[originalIdx] = {
                           ...originalItem,
-                          translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(text)
+                          translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(text)
                         };
                       }
                     } else {
@@ -688,7 +690,7 @@ export default function App() {
                             const singleResult = await translateToKurdishSorani(originalItem.text);
                             updatedSubtitles[originalIdx] = {
                               ...originalItem,
-                              translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(singleResult)
+                              translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(singleResult)
                             };
                           } catch (singleErr) {
                             console.error(`Final single-block fallback failed for index ${originalIdx}:`, singleErr);
@@ -707,7 +709,7 @@ export default function App() {
                           const singleResult = await translateToKurdishSorani(originalItem.text);
                           updatedSubtitles[originalIdx] = {
                             ...originalItem,
-                            translatedText: originalItem.text.trim() === "" ? originalItem.text : stripFormatting(singleResult)
+                            translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(singleResult)
                           };
                         } catch (singleErr) {
                           console.error(`Final single-block fallback failed for index ${originalIdx}:`, singleErr);
@@ -815,7 +817,7 @@ export default function App() {
                 if (refined !== undefined && refined.trim() !== '') {
                   updatedSubtitles[originalIdx] = {
                     ...item,
-                    translatedText: item.text.trim() === "" ? item.text : stripFormatting(refined)
+                    translatedText: item.text.trim() === "" ? item.text : cleanKurdishSubtitle(refined)
                   };
                 }
               });
