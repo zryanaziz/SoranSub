@@ -188,12 +188,14 @@ export function parseSubtitle(content: string, fileName: string): SubtitleItem[]
   return parseSRT(content);
 }
 
-export function stringifySRT(items: SubtitleItem[], useTranslation = false): string {
+export function stringifySRT(items: SubtitleItem[], useTranslation = false, isRtlHyphen = true): string {
   return items
     .map((item) => {
       let text = useTranslation ? (item.translatedText || item.text) : item.text;
       if (useTranslation && item.translatedText) {
-        text = cleanAndFormatKurdishSubtitle(item.translatedText, item.text);
+        text = isRtlHyphen 
+          ? cleanAndFormatKurdishSubtitle(item.translatedText, item.text)
+          : revertHyphenToLTR(item.translatedText, item.text);
       }
       // Use original item.index as requested
       return `${item.index}\n${item.startTime} --> ${item.endTime}\n${text}\n`;
@@ -477,4 +479,86 @@ export function moveTrailingPunctuationToStart(text: string, sourceText?: string
 
 export function stripFormatting(text: string, sourceText?: string): string {
   return cleanAndFormatKurdishSubtitle(text, sourceText);
+}
+
+/**
+ * Reverts Kurdish subtitle dialogue hyphens from RTL player compatibility format (سڵاو -)
+ * back to standard LTR format (- سڵاو), returning punctuation to sentence-end and un-mirroring brackets.
+ */
+export function revertHyphenToLTR(text: string, sourceText?: string): string {
+  if (!text) return "";
+  const mirrorMap: Record<string, string> = {
+    '(': ')',
+    ')': '(',
+    '[': ']',
+    ']': '[',
+    '{': '}',
+    '}': '{',
+    '<': '>',
+    '>': '<',
+    '«': '»',
+    '»': '«'
+  };
+
+  const sourceLines = sourceText ? sourceText.split('\n') : [];
+  const lines = text.split('\n');
+
+  const revertedLines = lines.map((line, idx) => {
+    let l = line.trim();
+    if (!l) return '';
+
+    // Protect ellipsis
+    l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
+    l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
+
+    const hasTrailingHyphen = Boolean(l.match(/\s*[-–—]$/));
+    const hasLeadingHyphen = Boolean(l.match(/^[-–—]\s*/));
+    const sourceHadHyphen = sourceLines[idx] ? Boolean(sourceLines[idx].trim().match(/^[-–—]\s*/)) : false;
+
+    const hadDialogueHyphen = hasTrailingHyphen || hasLeadingHyphen || sourceHadHyphen;
+
+    // Strip hyphens from edges
+    l = l.replace(/^[-–—\s]+/, '');
+    l = l.replace(/[-–—\s]+$/, '');
+    l = l.trim();
+
+    // Check if line starts with moved punctuation (from Rule 4)
+    const leadingPunctMatch = l.match(/^([\.\,\،\!\;\:\?]|\.\.\.|…|___ELLIPSIS_THREE___|___ELLIPSIS_UNICODE___)+/);
+    let movedPunct = '';
+    if (leadingPunctMatch) {
+      movedPunct = leadingPunctMatch[0];
+      l = l.slice(movedPunct.length).trimStart();
+    }
+
+    // Un-mirror brackets if they were mirrored (closing bracket before opening)
+    const parenClose = l.indexOf(')');
+    const parenOpen = l.indexOf('(');
+    const bracketClose = l.indexOf(']');
+    const bracketOpen = l.indexOf('[');
+    if ((parenClose !== -1 && (parenOpen === -1 || parenClose < parenOpen)) ||
+        (bracketClose !== -1 && (bracketOpen === -1 || bracketClose < bracketOpen))) {
+      let unmirrored = '';
+      for (let i = 0; i < l.length; i++) {
+        unmirrored += mirrorMap[l[i]] || l[i];
+      }
+      l = unmirrored;
+    }
+
+    // If punctuation was moved to start, return it to the natural end of the sentence
+    if (movedPunct) {
+      l = `${l}${movedPunct}`;
+    }
+
+    // Attach leading dialogue hyphen for LTR format
+    if (hadDialogueHyphen) {
+      l = `- ${l}`;
+    }
+
+    l = l.replace(/___ELLIPSIS_THREE___/g, '...');
+    l = l.replace(/___ELLIPSIS_UNICODE___/g, '…');
+
+    return l.trim();
+  }).filter(line => line.length > 0);
+
+  return revertedLines.join('\n');
 }

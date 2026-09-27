@@ -21,7 +21,8 @@ import {
   Clock,
   Type,
   ChevronRight,
-  FileText
+  FileText,
+  ArrowLeftRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -38,7 +39,8 @@ import {
   moveTrailingPunctuationToStart,
   cleanAndFormatKurdishSubtitle,
   cleanKurdishSubtitle,
-  cleanSourceSubtitle
+  cleanSourceSubtitle,
+  revertHyphenToLTR
 } from './lib/subtitle-utils';
 import { getMKVTracks, extractMKVSubtitle, mkvSubtitlesToSRT, MKVTrack } from './lib/mkv-utils';
 import { 
@@ -76,6 +78,7 @@ export default function App() {
   const [rangeSkipAlreadyTranslated, setRangeSkipAlreadyTranslated] = useState<boolean>(true);
   const [syncOffset, setSyncOffset] = useState('0');
   const [isSaving, setIsSaving] = useState(false);
+  const [isRtlHyphen, setIsRtlHyphen] = useState<boolean>(true);
   const [isDoublePassEnabled, setIsDoublePassEnabled] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('isDoublePassEnabled') !== 'false';
@@ -96,7 +99,7 @@ export default function App() {
     const timer = setTimeout(async () => {
       try {
         setIsSaving(true);
-        const content = stringifySRT(subtitles, true); // Save the translation
+        const content = stringifySRT(subtitles, true, isRtlHyphen); // Save the translation
         
         // Force .srt extension and append .ku for translation clarity
         // Also strip _TrackXX patterns as requested
@@ -750,9 +753,10 @@ export default function App() {
         indices.forEach(idx => {
           const item = updatedSubtitles[idx];
           if (item && item.translatedText && item.translatedText.trim()) {
+            const formatted = cleanAndFormatKurdishSubtitle(item.translatedText, item.text);
             updatedSubtitles[idx] = {
               ...item,
-              translatedText: cleanAndFormatKurdishSubtitle(item.translatedText, item.text)
+              translatedText: isRtlHyphen ? formatted : revertHyphenToLTR(formatted, item.text)
             };
           }
         });
@@ -846,9 +850,10 @@ export default function App() {
       indices.forEach(idx => {
         const item = updatedSubtitles[idx];
         if (item && item.translatedText && item.translatedText.trim()) {
+          const formatted = cleanAndFormatKurdishSubtitle(item.translatedText, item.text);
           updatedSubtitles[idx] = {
             ...item,
-            translatedText: cleanAndFormatKurdishSubtitle(item.translatedText, item.text)
+            translatedText: isRtlHyphen ? formatted : revertHyphenToLTR(formatted, item.text)
           };
         }
       });
@@ -869,6 +874,26 @@ export default function App() {
       setIsTranslating(false);
       setProgress(0);
     }
+  };
+
+  const handleToggleHyphenDirection = () => {
+    if (subtitles.length === 0) return;
+    const targetToLtr = isRtlHyphen; // if currently RTL, convert to LTR
+    const updated = subtitles.map(item => {
+      if (!item.translatedText) return item;
+      const transformed = targetToLtr 
+        ? revertHyphenToLTR(item.translatedText, item.text)
+        : cleanAndFormatKurdishSubtitle(item.translatedText, item.text);
+      return { ...item, translatedText: transformed };
+    });
+    setSubtitles(updated);
+    setIsRtlHyphen(!targetToLtr);
+    setStatus({
+      type: 'info',
+      message: targetToLtr
+        ? 'Reverted dialogue hyphens from RTL to LTR format (- سڵاو)'
+        : 'Formatted dialogue hyphens for RTL video players (سڵاو -)'
+    });
   };
 
   const handleTranslateAll = (forceAll: boolean = false) => {
@@ -909,7 +934,7 @@ export default function App() {
   };
 
   const handleDownload = (useTranslation: boolean) => {
-    const content = stringifySRT(subtitles, useTranslation);
+    const content = stringifySRT(subtitles, useTranslation, isRtlHyphen);
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1304,7 +1329,27 @@ export default function App() {
               <Languages size={14} />
             )}
           </button>
-<div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
+
+          <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
+
+          {/* Revert Hyphen Button (RTL ↔ LTR) */}
+          <button 
+            onClick={handleToggleHyphenDirection}
+            disabled={subtitles.length === 0}
+            className={cn(
+              "flex items-center gap-1.5 px-2 md:px-2.5 py-1.5 md:py-2 border border-[#141414] transition-all rounded-sm",
+              "hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer",
+              !isRtlHyphen && "bg-[#141414] text-[#E4E3E0]"
+            )}
+            title={isRtlHyphen ? "Revert Hyphens from RTL to LTR (- سڵاو)" : "Format Hyphens for RTL Players (سڵاو -)"}
+          >
+            <ArrowLeftRight size={14} />
+            <span className="hidden sm:inline text-[9px] md:text-[10px] font-mono uppercase tracking-wider">
+              {isRtlHyphen ? "RTL → LTR" : "LTR → RTL"}
+            </span>
+          </button>
+
+          <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
           <button 
             onClick={() => setShowSyncModal(true)}
@@ -1426,7 +1471,22 @@ export default function App() {
                 <div className="grid grid-cols-[40px_1fr_1fr] border-b border-[#141414] bg-[#E4E3E0] sticky top-0 z-10">
                   <div className="p-2 md:p-3 border-r border-[#141414] text-[8px] md:text-[10px] font-mono uppercase opacity-50">#</div>
                   <div className="p-2 md:p-3 border-r border-[#141414] text-[8px] md:text-[10px] font-mono uppercase opacity-50">Original</div>
-                  <div className="p-2 md:p-3 text-[8px] md:text-[10px] font-mono uppercase opacity-50">Kurdish</div>
+                  <div className="p-2 md:p-3 text-[8px] md:text-[10px] font-mono uppercase flex items-center justify-between">
+                    <span className="opacity-50">Kurdish</span>
+                    {subtitles.length > 0 && (
+                      <button 
+                        onClick={handleToggleHyphenDirection}
+                        className={cn(
+                          "text-[8px] md:text-[9px] font-mono px-1.5 py-0.5 border border-[#141414]/30 rounded transition-colors cursor-pointer flex items-center gap-1",
+                          !isRtlHyphen ? "bg-[#141414] text-[#E4E3E0] border-[#141414]" : "hover:bg-[#141414] hover:text-white"
+                        )}
+                        title={isRtlHyphen ? "Revert Hyphens from RTL to LTR (- سڵاو)" : "Format Hyphens for RTL Players (سڵاو -)"}
+                      >
+                        <ArrowLeftRight size={10} />
+                        <span>{isRtlHyphen ? "RTL → LTR" : "LTR → RTL"}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
                 
                 {filteredSubtitles.map((item) => {
