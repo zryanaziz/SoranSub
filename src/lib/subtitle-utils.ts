@@ -188,11 +188,11 @@ export function parseSubtitle(content: string, fileName: string): SubtitleItem[]
   return parseSRT(content);
 }
 
-export function stringifySRT(items: SubtitleItem[], useTranslation = false, isRtlHyphen = true): string {
+export function stringifySRT(items: SubtitleItem[], useTranslation = false, isRtlHyphen?: boolean): string {
   return items
     .map((item) => {
       let text = useTranslation ? (item.translatedText || item.text) : item.text;
-      if (useTranslation && item.translatedText) {
+      if (useTranslation && item.translatedText && isRtlHyphen !== undefined) {
         text = isRtlHyphen 
           ? cleanAndFormatKurdishSubtitle(item.translatedText, item.text)
           : revertHyphenToLTR(item.translatedText, item.text);
@@ -319,15 +319,61 @@ export function hasAlreadyMirroredBrackets(str: string): boolean {
 }
 
 /**
- * Cleans Kurdish translated and refined lines:
+ * Cleans Kurdish translated and refined lines during translation and refinement:
  * - Strips any residual bracketed markers ([Applause], [Music]), parentheses ((Sighs), (Crying)),
  *   HTML tags (<i>, <b>), music notes (♪, ♫), and speaker tags (NAME:, JOHN:, etc.).
- * - Moves dialogue hyphens to the other side (سڵاو -) for RTL video player compatibility.
+ * - Preserves natural leading dialogue dashes (- Hello -> - سڵاو) without moving them during translation.
  * - Protects triple dots (...) and unicode ellipsis (…).
  * - Converts Latin ? to Kurdish ؟, Latin ; to Kurdish ؛, comma between non-digits to Kurdish ،.
  */
 export function cleanKurdishSubtitle(text: string, sourceText?: string): string {
-  return cleanAndFormatKurdishSubtitle(text, sourceText);
+  if (!text) return "";
+
+  let cleanText = text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
+
+  cleanText = cleanText.replace(/\[\s*(?:applause|music|laughter|gasp|sigh|groan|screams?|whisper|silence|cheering|sound|door|footsteps|cough|throat|[a-zA-Z\s_\-]{2,40}|مۆسیقا|چەپڵە|پێکەنین|هاوار|گریان|دەنگی\s+[^\s\]]+|بێدەنگی|سۆز|تاریکی)\s*\]/gi, '');
+  cleanText = cleanText.replace(/\(\s*(?:sighs?|crying|snickers?|whispers?|laughter|chuckles?|gasps?|groans?|screams?|applause|music|singing|coughing|throat|in [a-zA-Z]+|speaking [a-zA-Z]+|[a-zA-Z\s_\-]{2,30}|مۆسیقا|چەپڵە|پێکەنین|هاوار|گریان|دەنگی\s+[^\s\)]+|بێدەنگی|سۆز|تاریکی|هەناسەبڕکێ)\s*\)/gi, '');
+  cleanText = cleanText.replace(/<[^>]*>/g, '');
+  cleanText = cleanText.replace(/[♪♫\u266a\u266b]/g, '');
+  cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/gm, '');
+
+  const sourceLines = sourceText ? sourceText.split('\n') : [];
+  const lines = cleanText.split('\n');
+  const cleanedLines = lines.map((line, idx) => {
+    let l = line.replace(/[ \t]+/g, ' ').trim();
+    if (!l) return '';
+
+    l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/, '');
+
+    l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
+    l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
+
+    const leadingHyphen = Boolean(l.match(/^[-–—]\s*/));
+    const trailingHyphen = Boolean(l.match(/\s*[-–—]$/));
+    const sourceHadHyphen = sourceLines[idx] ? Boolean(sourceLines[idx].trim().match(/^[-–—]\s*/)) : false;
+    const hasHyphen = leadingHyphen || trailingHyphen || sourceHadHyphen;
+
+    l = l.replace(/^[-–—\s]+/, '');
+    l = l.replace(/[-–—\s]+$/, '');
+    l = l.trim();
+    if (!l) return '';
+
+    l = l.replace(/\?/g, '؟');
+    l = l.replace(/;/g, '؛');
+    l = l.replace(/(^|[^\d]),([^\d]|$)/g, '$1،$2');
+
+    // Keep natural dialogue dash during translate and refinement
+    if (hasHyphen) {
+      l = `- ${l}`;
+    }
+
+    l = l.replace(/___ELLIPSIS_THREE___/g, '...');
+    l = l.replace(/___ELLIPSIS_UNICODE___/g, '…');
+
+    return l.trim();
+  }).filter(line => line.length > 0);
+
+  return cleanedLines.join('\n');
 }
 
 /**
@@ -478,6 +524,13 @@ export function moveTrailingPunctuationToStart(text: string, sourceText?: string
 }
 
 export function stripFormatting(text: string, sourceText?: string): string {
+  return cleanAndFormatKurdishSubtitle(text, sourceText);
+}
+
+/**
+ * Formats Kurdish subtitle dialogue hyphens for RTL video player compatibility (سڵاو -).
+ */
+export function formatHyphenToRTL(text: string, sourceText?: string): string {
   return cleanAndFormatKurdishSubtitle(text, sourceText);
 }
 

@@ -22,7 +22,8 @@ import {
   Type,
   ChevronRight,
   FileText,
-  ArrowLeftRight
+  ArrowLeftRight,
+  ArrowRightLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -40,6 +41,7 @@ import {
   cleanAndFormatKurdishSubtitle,
   cleanKurdishSubtitle,
   cleanSourceSubtitle,
+  formatHyphenToRTL,
   revertHyphenToLTR
 } from './lib/subtitle-utils';
 import { getMKVTracks, extractMKVSubtitle, mkvSubtitlesToSRT, MKVTrack } from './lib/mkv-utils';
@@ -78,7 +80,7 @@ export default function App() {
   const [rangeSkipAlreadyTranslated, setRangeSkipAlreadyTranslated] = useState<boolean>(true);
   const [syncOffset, setSyncOffset] = useState('0');
   const [isSaving, setIsSaving] = useState(false);
-  const [isRtlHyphen, setIsRtlHyphen] = useState<boolean>(true);
+  const [isRtlHyphen, setIsRtlHyphen] = useState<boolean>(false);
   const [isDoublePassEnabled, setIsDoublePassEnabled] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('isDoublePassEnabled') !== 'false';
@@ -749,14 +751,13 @@ export default function App() {
 
       // If user selected 1-Pass mode (no refinement), finish here
       if (!shouldRefine) {
-        // Enforce all 6 Kurdish formatting rules across processed blocks
         indices.forEach(idx => {
           const item = updatedSubtitles[idx];
           if (item && item.translatedText && item.translatedText.trim()) {
-            const formatted = cleanAndFormatKurdishSubtitle(item.translatedText, item.text);
+            const cleaned = cleanKurdishSubtitle(item.translatedText, item.text);
             updatedSubtitles[idx] = {
               ...item,
-              translatedText: isRtlHyphen ? formatted : revertHyphenToLTR(formatted, item.text)
+              translatedText: cleaned
             };
           }
         });
@@ -846,14 +847,14 @@ export default function App() {
         }
       }
 
-      // Enforce all 6 Kurdish formatting rules across all processed blocks
+      // Clean and polish subtitles across all processed blocks naturally (preserving standard dialogue hyphens)
       indices.forEach(idx => {
         const item = updatedSubtitles[idx];
         if (item && item.translatedText && item.translatedText.trim()) {
-          const formatted = cleanAndFormatKurdishSubtitle(item.translatedText, item.text);
+          const cleaned = cleanKurdishSubtitle(item.translatedText, item.text);
           updatedSubtitles[idx] = {
             ...item,
-            translatedText: isRtlHyphen ? formatted : revertHyphenToLTR(formatted, item.text)
+            translatedText: cleaned
           };
         }
       });
@@ -876,24 +877,46 @@ export default function App() {
     }
   };
 
-  const handleToggleHyphenDirection = () => {
+  const handleFormatHyphenRTL = () => {
     if (subtitles.length === 0) return;
-    const targetToLtr = isRtlHyphen; // if currently RTL, convert to LTR
     const updated = subtitles.map(item => {
-      if (!item.translatedText) return item;
-      const transformed = targetToLtr 
-        ? revertHyphenToLTR(item.translatedText, item.text)
-        : cleanAndFormatKurdishSubtitle(item.translatedText, item.text);
-      return { ...item, translatedText: transformed };
+      return {
+        ...item,
+        text: item.text ? formatHyphenToRTL(item.text) : item.text,
+        translatedText: item.translatedText ? formatHyphenToRTL(item.translatedText, item.text) : item.translatedText
+      };
     });
     setSubtitles(updated);
-    setIsRtlHyphen(!targetToLtr);
+    setIsRtlHyphen(true);
     setStatus({
       type: 'info',
-      message: targetToLtr
-        ? 'Reverted dialogue hyphens from RTL to LTR format (- سڵاو)'
-        : 'Formatted dialogue hyphens for RTL video players (سڵاو -)'
+      message: 'Formatted dialogue hyphens for RTL video players on original & Kurdish (سڵاو -)'
     });
+  };
+
+  const handleRevertHyphenLTR = () => {
+    if (subtitles.length === 0) return;
+    const updated = subtitles.map(item => {
+      return {
+        ...item,
+        text: item.text ? revertHyphenToLTR(item.text) : item.text,
+        translatedText: item.translatedText ? revertHyphenToLTR(item.translatedText, item.text) : item.translatedText
+      };
+    });
+    setSubtitles(updated);
+    setIsRtlHyphen(false);
+    setStatus({
+      type: 'info',
+      message: 'Reverted dialogue hyphens from RTL to LTR format on original & Kurdish (- سڵاو)'
+    });
+  };
+
+  const handleToggleHyphenDirection = () => {
+    if (isRtlHyphen) {
+      handleRevertHyphenLTR();
+    } else {
+      handleFormatHyphenRTL();
+    }
   };
 
   const handleTranslateAll = (forceAll: boolean = false) => {
@@ -1332,20 +1355,37 @@ export default function App() {
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
 
-          {/* Revert Hyphen Button (RTL ↔ LTR) */}
+          {/* Hyphen RTL Button (LTR → RTL) */}
           <button 
-            onClick={handleToggleHyphenDirection}
+            onClick={handleFormatHyphenRTL}
             disabled={subtitles.length === 0}
             className={cn(
               "flex items-center gap-1.5 px-2 md:px-2.5 py-1.5 md:py-2 border border-[#141414] transition-all rounded-sm",
               "hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer",
-              !isRtlHyphen && "bg-[#141414] text-[#E4E3E0]"
+              isRtlHyphen && "bg-[#141414] text-[#E4E3E0]"
             )}
-            title={isRtlHyphen ? "Revert Hyphens from RTL to LTR (- سڵاو)" : "Format Hyphens for RTL Players (سڵاو -)"}
+            title="Format Dialogue Hyphens for RTL Players (سڵاو -)"
+          >
+            <ArrowRightLeft size={14} />
+            <span className="hidden sm:inline text-[9px] md:text-[10px] font-mono uppercase tracking-wider">
+              LTR → RTL
+            </span>
+          </button>
+
+          {/* Revert Hyphen Button (RTL → LTR) */}
+          <button 
+            onClick={handleRevertHyphenLTR}
+            disabled={subtitles.length === 0}
+            className={cn(
+              "flex items-center gap-1.5 px-2 md:px-2.5 py-1.5 md:py-2 border border-[#141414] transition-all rounded-sm",
+              "hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer",
+              !isRtlHyphen && subtitles.length > 0 && "bg-[#141414] text-[#E4E3E0]"
+            )}
+            title="Revert Dialogue Hyphens from RTL to LTR (- سڵاو)"
           >
             <ArrowLeftRight size={14} />
             <span className="hidden sm:inline text-[9px] md:text-[10px] font-mono uppercase tracking-wider">
-              {isRtlHyphen ? "RTL → LTR" : "LTR → RTL"}
+              RTL → LTR
             </span>
           </button>
 
@@ -1474,17 +1514,30 @@ export default function App() {
                   <div className="p-2 md:p-3 text-[8px] md:text-[10px] font-mono uppercase flex items-center justify-between">
                     <span className="opacity-50">Kurdish</span>
                     {subtitles.length > 0 && (
-                      <button 
-                        onClick={handleToggleHyphenDirection}
-                        className={cn(
-                          "text-[8px] md:text-[9px] font-mono px-1.5 py-0.5 border border-[#141414]/30 rounded transition-colors cursor-pointer flex items-center gap-1",
-                          !isRtlHyphen ? "bg-[#141414] text-[#E4E3E0] border-[#141414]" : "hover:bg-[#141414] hover:text-white"
-                        )}
-                        title={isRtlHyphen ? "Revert Hyphens from RTL to LTR (- سڵاو)" : "Format Hyphens for RTL Players (سڵاو -)"}
-                      >
-                        <ArrowLeftRight size={10} />
-                        <span>{isRtlHyphen ? "RTL → LTR" : "LTR → RTL"}</span>
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button 
+                          onClick={handleFormatHyphenRTL}
+                          className={cn(
+                            "text-[8px] md:text-[9px] font-mono px-1.5 py-0.5 border border-[#141414]/30 rounded transition-colors cursor-pointer flex items-center gap-1",
+                            isRtlHyphen ? "bg-[#141414] text-[#E4E3E0] border-[#141414]" : "hover:bg-[#141414] hover:text-white"
+                          )}
+                          title="Format Dialogue Hyphens for RTL Players (سڵاو -)"
+                        >
+                          <ArrowRightLeft size={10} />
+                          <span>LTR → RTL</span>
+                        </button>
+                        <button 
+                          onClick={handleRevertHyphenLTR}
+                          className={cn(
+                            "text-[8px] md:text-[9px] font-mono px-1.5 py-0.5 border border-[#141414]/30 rounded transition-colors cursor-pointer flex items-center gap-1",
+                            !isRtlHyphen ? "bg-[#141414] text-[#E4E3E0] border-[#141414]" : "hover:bg-[#141414] hover:text-white"
+                          )}
+                          title="Revert Dialogue Hyphens from RTL to LTR (- سڵاو)"
+                        >
+                          <ArrowLeftRight size={10} />
+                          <span>RTL → LTR</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
