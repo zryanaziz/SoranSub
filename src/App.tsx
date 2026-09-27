@@ -632,7 +632,7 @@ export default function App() {
                 } else {
                   updatedSubtitles[originalIdx] = {
                     ...originalItem,
-                    translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(translated)
+                    translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(translated, originalItem.text)
                   };
                 }
               });
@@ -673,7 +673,7 @@ export default function App() {
                       } else {
                         updatedSubtitles[originalIdx] = {
                           ...originalItem,
-                          translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(text)
+                          translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(text, originalItem.text)
                         };
                       }
                     } else {
@@ -690,7 +690,7 @@ export default function App() {
                             const singleResult = await translateToKurdishSorani(originalItem.text);
                             updatedSubtitles[originalIdx] = {
                               ...originalItem,
-                              translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(singleResult)
+                              translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(singleResult, originalItem.text)
                             };
                           } catch (singleErr) {
                             console.error(`Final single-block fallback failed for index ${originalIdx}:`, singleErr);
@@ -709,7 +709,7 @@ export default function App() {
                           const singleResult = await translateToKurdishSorani(originalItem.text);
                           updatedSubtitles[originalIdx] = {
                             ...originalItem,
-                            translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(singleResult)
+                            translatedText: originalItem.text.trim() === "" ? originalItem.text : cleanKurdishSubtitle(singleResult, originalItem.text)
                           };
                         } catch (singleErr) {
                           console.error(`Final single-block fallback failed for index ${originalIdx}:`, singleErr);
@@ -752,7 +752,7 @@ export default function App() {
           if (item && item.translatedText && item.translatedText.trim()) {
             updatedSubtitles[idx] = {
               ...item,
-              translatedText: cleanAndFormatKurdishSubtitle(item.translatedText)
+              translatedText: cleanAndFormatKurdishSubtitle(item.translatedText, item.text)
             };
           }
         });
@@ -817,7 +817,7 @@ export default function App() {
                 if (refined !== undefined && refined.trim() !== '') {
                   updatedSubtitles[originalIdx] = {
                     ...item,
-                    translatedText: item.text.trim() === "" ? item.text : cleanKurdishSubtitle(refined)
+                    translatedText: item.text.trim() === "" ? item.text : cleanKurdishSubtitle(refined, item.text)
                   };
                 }
               });
@@ -848,7 +848,7 @@ export default function App() {
         if (item && item.translatedText && item.translatedText.trim()) {
           updatedSubtitles[idx] = {
             ...item,
-            translatedText: cleanAndFormatKurdishSubtitle(item.translatedText)
+            translatedText: cleanAndFormatKurdishSubtitle(item.translatedText, item.text)
           };
         }
       });

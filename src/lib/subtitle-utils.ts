@@ -193,7 +193,7 @@ export function stringifySRT(items: SubtitleItem[], useTranslation = false): str
     .map((item) => {
       let text = useTranslation ? (item.translatedText || item.text) : item.text;
       if (useTranslation && item.translatedText) {
-        text = cleanAndFormatKurdishSubtitle(item.translatedText);
+        text = cleanAndFormatKurdishSubtitle(item.translatedText, item.text);
       }
       // Use original item.index as requested
       return `${item.index}\n${item.startTime} --> ${item.endTime}\n${text}\n`;
@@ -269,10 +269,14 @@ export function cleanSourceSubtitle(text: string): string {
     l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
     l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
 
-    // Removes leading dialogue dashes (e.g., - Hello -> Hello)
-    l = l.replace(/^[-–—\s]+/, '');
+    // Preserves and normalizes leading dialogue dashes (e.g., - Hello) to standard "- "
+    const hasLeadingDash = /^[-–—]\s*/.test(l);
+    if (hasLeadingDash) {
+      l = '- ' + l.replace(/^[-–—\s]+/, '');
+    } else {
+      l = l.replace(/^[-–—\s]+/, '');
+    }
     // Removes dangling edge symbols while preserving internal punctuation
-    l = l.replace(/^[-–—\s]+/, '');
     l = l.replace(/[-–—\s]+$/, '');
 
     // Restore protected ellipsis
@@ -316,57 +320,12 @@ export function hasAlreadyMirroredBrackets(str: string): boolean {
  * Cleans Kurdish translated and refined lines:
  * - Strips any residual bracketed markers ([Applause], [Music]), parentheses ((Sighs), (Crying)),
  *   HTML tags (<i>, <b>), music notes (♪, ♫), and speaker tags (NAME:, JOHN:, etc.).
- * - Removes leading dialogue dashes (e.g., - سڵاو → سڵاو) and dangling edge symbols,
- *   while strictly protecting triple dots (...) and unicode ellipsis (…).
+ * - Moves dialogue hyphens to the other side (سڵاو -) for RTL video player compatibility.
+ * - Protects triple dots (...) and unicode ellipsis (…).
  * - Converts Latin ? to Kurdish ؟, Latin ; to Kurdish ؛, comma between non-digits to Kurdish ،.
  */
-export function cleanKurdishSubtitle(text: string): string {
-  if (!text) return "";
-
-  let cleanText = text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
-
-  // Strips residual tags (SDH markers, audio descriptions, HTML tags, music notes, speaker tags)
-  // Strips bracketed SDH markers e.g. [Applause], [Music], [Laughter], [مۆسیقا], [چەپڵە]
-  cleanText = cleanText.replace(/\[\s*(?:applause|music|laughter|gasp|sigh|groan|screams?|whisper|silence|cheering|sound|door|footsteps|cough|throat|[a-zA-Z\s_\-]{2,40}|مۆسیقا|چەپڵە|پێکەنین|هاوار|گریان|دەنگی\s+[^\s\]]+|بێدەنگی|سۆز|تاریکی)\s*\]/gi, '');
-  // Strips parenthetical SDH descriptions e.g. (Sighs), (Crying), (Laughs), (پێکەنین), (گریان)
-  cleanText = cleanText.replace(/\(\s*(?:sighs?|crying|snickers?|whispers?|laughter|chuckles?|gasps?|groans?|screams?|applause|music|singing|coughing|throat|in [a-zA-Z]+|speaking [a-zA-Z]+|[a-zA-Z\s_\-]{2,30}|مۆسیقا|چەپڵە|پێکەنین|هاوار|گریان|دەنگی\s+[^\s\)]+|بێدەنگی|سۆز|تاریکی|هەناسەبڕکێ)\s*\)/gi, '');
-  cleanText = cleanText.replace(/<[^>]*>/g, '');
-  cleanText = cleanText.replace(/[♪♫\u266a\u266b]/g, '');
-  cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/gm, '');
-
-  const lines = cleanText.split('\n');
-  const cleanedLines = lines.map(line => {
-    let l = line.replace(/[ \t]+/g, ' ').trim();
-    if (!l) return '';
-
-    // Line-level speaker prefix
-    l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/, '');
-
-    // Protect triple dots (...) and unicode ellipsis (…)
-    l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
-    l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
-
-    // Removes leading dialogue dashes (e.g., - سڵاو → سڵاو) and dangling edge symbols
-    l = l.replace(/^[-–—\s]+/, '');
-    l = l.replace(/^[-–—;؛\s]+/, '');
-    l = l.replace(/[-–—\s]+$/, '');
-
-    // Restore ellipsis
-    l = l.replace(/___ELLIPSIS_THREE___/g, '...');
-    l = l.replace(/___ELLIPSIS_UNICODE___/g, '…');
-
-    l = l.trim();
-    if (!l) return '';
-
-    // Kurdish Question Marks (Latin ? -> Kurdish ؟) & punctuation normalization
-    l = l.replace(/\?/g, '؟');
-    l = l.replace(/;/g, '؛');
-    l = l.replace(/(^|[^\d]),([^\d]|$)/g, '$1،$2');
-
-    return l.trim();
-  }).filter(line => line.length > 0);
-
-  return cleanedLines.join('\n');
+export function cleanKurdishSubtitle(text: string, sourceText?: string): string {
+  return cleanAndFormatKurdishSubtitle(text, sourceText);
 }
 
 /**
@@ -374,13 +333,16 @@ export function cleanKurdishSubtitle(text: string): string {
  * 
  * Rules enforced:
  * 1. Strips SDH & Speaker Tags: Removes any residual bracketed text, parentheses, or HTML tags.
- * 2. Removes Dialogue Hyphens / Edge Symbols: Cleans up leading dialogue dashes (e.g., - سڵاو → سڵاو), while protecting ellipsis (... and …).
- * 3. Kurdish Question Marks: Converts Latin ? to Kurdish ؟.
- * 4. RTL Trailing Punctuation Positioning: Moves trailing punctuation (periods ., commas ،, exclamation !, ellipsis ...) to visual position required by RTL video players (VLC, MPV, Web players). Question marks (؟) remain at natural sentence end.
- * 5. Leading Numbers & Expressions: In lines starting with numbers (e.g., 100 ساڵ or 10 مانگ), adjusts positioning so RTL video players display number visually at beginning of sentence on screen.
+ * 2. Dialogue Hyphens: Moves dialogue hyphens to the other side (e.g., - سڵاو → سڵاو -) for video players
+ *    that do not read RTL right-to-left properly, while strictly protecting triple dots (...) and unicode ellipsis (…).
+ * 3. Kurdish Question Marks: Converts Latin ? to Kurdish ؟, Latin ; to Kurdish ؛, and comma between non-digits to Kurdish ،.
+ * 4. RTL Trailing Punctuation Positioning: Moves trailing punctuation (periods ., commas ،, exclamation !, ellipsis ...)
+ *    to visual position required by RTL video players (VLC, MPV, Web players). Question marks (؟) remain at natural sentence end.
+ * 5. Leading Numbers & Expressions: In lines starting with numbers (e.g., 100 ساڵ or 10 مانگ), adjusts positioning so RTL video players
+ *    display number visually at beginning of sentence on screen.
  * 6. Bracket Mirroring (RTL Symmetry): Inverts bracket directions (( ↔ ), [ ↔ ], « ↔ », { ↔ }) so RTL players render them facing correct direction.
  */
-export function cleanAndFormatKurdishSubtitle(text: string): string {
+export function cleanAndFormatKurdishSubtitle(text: string, sourceText?: string): string {
   if (!text) return "";
 
   // Convert literal newlines or break tags into actual newlines
@@ -398,29 +360,32 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
   // Remove speaker prefixes like "NAME: " or "ناوی کەس: "
   cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/gm, '');
 
+  const sourceLines = sourceText ? sourceText.split('\n') : [];
   const lines = cleanText.split('\n');
-  const formattedLines = lines.map(line => {
+  const formattedLines = lines.map((line, idx) => {
     let l = line.replace(/[ \t]+/g, ' ').trim();
     if (!l) return '';
 
     // Remove any line-level speaker tag remaining
     l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/, '');
 
-    // Rule 2: Removes Dialogue Hyphens / Edge Symbols while protecting ellipsis (... and …)
     // Protect ellipsis first
     l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
     l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
 
-    // Remove leading dialogue dashes/hyphens: e.g. - سڵاو -> سڵاو, – سڵاو -> سڵاو, — سڵاو -> سڵاو
+    // Rule 2: Move Dialogue Hyphens to Another Side (RTL Video Player Compatibility)
+    // In RTL video players (VLC, MPV, Web players), players do not read RTL right-to-left correctly.
+    // Moving leading dialogue dashes (- سڵاو) to the other side (سڵاو -) ensures the player
+    // displays the hyphen visually on the right side of the screen at the start of the sentence.
+    const leadingHyphenMatch = Boolean(l.match(/^[-–—]\s*/));
+    const trailingHyphenMatch = Boolean(l.match(/\s*[-–—]$/));
+    const sourceLineHadHyphen = sourceLines[idx] ? Boolean(sourceLines[idx].trim().match(/^[-–—]\s*/)) : false;
+
+    const hasDialogueHyphen = leadingHyphenMatch || trailingHyphenMatch || sourceLineHadHyphen;
+
+    // Strip hyphens from both ends for clean idempotent processing
     l = l.replace(/^[-–—\s]+/, '');
-
-    // Remove dangling hyphens/dashes or edge punctuation at line start/end (except protected ellipsis)
-    l = l.replace(/^[-–—;؛\s]+/, '');
     l = l.replace(/[-–—\s]+$/, '');
-
-    // Restore ellipsis
-    l = l.replace(/___ELLIPSIS_THREE___/g, '...');
-    l = l.replace(/___ELLIPSIS_UNICODE___/g, '…');
 
     l = l.trim();
     if (!l) return '';
@@ -429,10 +394,6 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
     l = l.replace(/\?/g, '؟');
     l = l.replace(/;/g, '؛');
     l = l.replace(/(^|[^\d]),([^\d]|$)/g, '$1،$2');
-
-    // Check if line already starts with moved trailing punctuation (idempotency guard)
-    const alreadyMovedPunctMatch = l.match(/^([\.\,\،\!\;\؛]|\.\.\.|…)+/);
-    const hasAlreadyMovedPunct = Boolean(alreadyMovedPunctMatch);
 
     // Rule 4: RTL Trailing Punctuation Positioning
     // Question marks (؟) remain at the natural sentence end.
@@ -443,9 +404,13 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
       l = l.slice(qMark.length).trimStart() + qMark;
     }
 
+    // Check if line already starts with moved trailing punctuation (idempotency guard)
+    const alreadyMovedPunctMatch = l.match(/^([\.\,\،\!\;\؛\:]|___ELLIPSIS_THREE___|___ELLIPSIS_UNICODE___)+/);
+    const hasAlreadyMovedPunct = Boolean(alreadyMovedPunctMatch);
+
     // Extract trailing punctuation at the end of the line (except ? and ؟)
     let trailingPunct = '';
-    const matchPunct = l.match(/(?:\.\.\.|…|[\.\,\،\!\;\؛\:])+$/);
+    const matchPunct = l.match(/(?:___ELLIPSIS_THREE___|___ELLIPSIS_UNICODE___|[\.\,\،\!\;\؛\:])+$/);
     if (matchPunct && !hasAlreadyMovedPunct) {
       trailingPunct = matchPunct[0];
       l = l.slice(0, l.length - trailingPunct.length).trimEnd();
@@ -461,11 +426,6 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
       if (numPart && restPart) {
         l = `${restPart} ${numPart}`;
       }
-    }
-
-    // Re-attach trailing punctuation to the visual start (left) of the line for RTL player compatibility
-    if (trailingPunct) {
-      l = `${trailingPunct}${l}`;
     }
 
     // Rule 6: Bracket Mirroring (RTL Symmetry)
@@ -491,16 +451,30 @@ export function cleanAndFormatKurdishSubtitle(text: string): string {
       l = mirrored;
     }
 
+    // Attach dialogue hyphen to the other side (end of line) for RTL player rendering
+    if (hasDialogueHyphen) {
+      l = `${l} -`;
+    }
+
+    // Re-attach trailing punctuation to the visual start (left) of the line for RTL player compatibility
+    if (trailingPunct) {
+      l = `${trailingPunct}${l}`;
+    }
+
+    // Restore protected ellipsis
+    l = l.replace(/___ELLIPSIS_THREE___/g, '...');
+    l = l.replace(/___ELLIPSIS_UNICODE___/g, '…');
+
     return l.trim();
   }).filter(line => line.length > 0);
 
   return formattedLines.join('\n');
 }
 
-export function moveTrailingPunctuationToStart(text: string): string {
-  return cleanAndFormatKurdishSubtitle(text);
+export function moveTrailingPunctuationToStart(text: string, sourceText?: string): string {
+  return cleanAndFormatKurdishSubtitle(text, sourceText);
 }
 
-export function stripFormatting(text: string): string {
-  return cleanAndFormatKurdishSubtitle(text);
+export function stripFormatting(text: string, sourceText?: string): string {
+  return cleanAndFormatKurdishSubtitle(text, sourceText);
 }
