@@ -191,8 +191,10 @@ export function parseSubtitle(content: string, fileName: string): SubtitleItem[]
 export function stringifySRT(items: SubtitleItem[], useTranslation = false, isRtlHyphen?: boolean): string {
   return items
     .map((item) => {
-      let text = useTranslation ? (item.translatedText || item.text) : item.text;
-      if (useTranslation && item.translatedText && isRtlHyphen !== undefined) {
+      let text = useTranslation 
+        ? (item.translatedText && item.translatedText.trim() ? item.translatedText : item.text) 
+        : item.text;
+      if (useTranslation && item.translatedText && item.translatedText.trim() && isRtlHyphen !== undefined) {
         text = isRtlHyphen 
           ? cleanAndFormatKurdishSubtitle(item.translatedText, item.text)
           : revertHyphenToLTR(item.translatedText, item.text);
@@ -614,4 +616,41 @@ export function revertHyphenToLTR(text: string, sourceText?: string): string {
   }).filter(line => line.length > 0);
 
   return revertedLines.join('\n');
+}
+
+export function stringifyASS(items: SubtitleItem[], useTranslation = true): string {
+  const header = `[Script Info]
+Title: SoranSub Export (.ass)
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: None
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Calibri,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,10,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+  const dialogues = items.map(item => {
+    const text = useTranslation 
+      ? (item.translatedText && item.translatedText.trim() ? item.translatedText : item.text) 
+      : item.text;
+    const cleanText = text.replace(/\n/g, '\\N');
+    const startStr = secondsToASSTime(item.startTimeSeconds);
+    const endStr = secondsToASSTime(item.endTimeSeconds);
+    return `Dialogue: 0,${startStr},${endStr},Default,,0,0,0,,${cleanText}`;
+  }).join('\n');
+
+  return header + dialogues + '\n';
+}
+
+function secondsToASSTime(seconds: number): string {
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const centisecs = Math.floor(((seconds % 1) * 100));
+  return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${centisecs.toString().padStart(2, '0')}`;
 }

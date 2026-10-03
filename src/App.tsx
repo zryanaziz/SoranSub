@@ -42,7 +42,8 @@ import {
   cleanKurdishSubtitle,
   cleanSourceSubtitle,
   formatHyphenToRTL,
-  revertHyphenToLTR
+  revertHyphenToLTR,
+  stringifyASS
 } from './lib/subtitle-utils';
 import { getMKVTracks, extractMKVSubtitle, mkvSubtitlesToSRT, MKVTrack } from './lib/mkv-utils';
 import { 
@@ -987,6 +988,28 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadASS = () => {
+    if (subtitles.length === 0) return;
+    const content = stringifyASS(subtitles, true);
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    
+    let downloadName = (fileName || 'translated.srt').replace(/_Track\d+/gi, '');
+    if (downloadName.includes('.')) {
+      downloadName = downloadName.substring(0, downloadName.lastIndexOf('.')) + '.ku.ass';
+    } else {
+      downloadName = downloadName + '.ku.ass';
+    }
+    a.download = downloadName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setStatus({ type: 'success', message: 'Downloaded ASS subtitle (.ass) with Calibri font successfully!' });
+  };
+
   const handleCloseSubtitle = () => {
     setSubtitles([]);
     setFileName('');
@@ -1418,12 +1441,31 @@ export default function App() {
             onClick={() => handleDownload(true)}
             disabled={subtitles.length === 0}
             className={cn(
-              "flex items-center justify-center p-1.5 md:p-2 bg-[#141414] text-[#E4E3E0] hover:opacity-90 disabled:opacity-30 transition-all rounded-sm",
+              "flex items-center gap-1.5 px-2 md:px-2.5 py-1.5 md:py-2 border border-[#141414] transition-all rounded-sm",
+              "hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer",
               isSaving && "opacity-50"
             )}
-            title={isSaving ? "Syncing to workspace..." : "Save/Download Subtitles"}
+            title={isSaving ? "Syncing to workspace..." : "Download Translated SRT Subtitle"}
           >
             {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            <span className="hidden sm:inline text-[9px] md:text-[10px] font-mono uppercase tracking-wider">
+              .srt
+            </span>
+          </button>
+
+          <button 
+            onClick={handleDownloadASS}
+            disabled={subtitles.length === 0}
+            className={cn(
+              "flex items-center gap-1.5 px-2 md:px-2.5 py-1.5 md:py-2 bg-[#141414] text-[#E4E3E0] transition-all rounded-sm",
+              "hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            )}
+            title="Download Translated ASS Subtitle (.ass format with Calibri font)"
+          >
+            <FileText size={14} />
+            <span className="hidden sm:inline text-[9px] md:text-[10px] font-mono uppercase tracking-wider">
+              .ass
+            </span>
           </button>
         </div>
       </header>

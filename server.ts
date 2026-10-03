@@ -19,12 +19,12 @@ const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator a
 
 const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
 const MODELS = [
-  "gemini-3.5-flash-lite",
-  "gemini-3.1-flash-lite",
-  "gemini-2.5-flash-lite",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
-  "gemini-3.5-flash"
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite"
 ];
 let currentModelIndex = 0;
 
@@ -336,6 +336,7 @@ async function startServer() {
             5. SUBTITLE ECONOMY: Maintain brevity without sacrificing meaning. Ensure maximum readability for viewers within the duration of the subtitle display.
             6. FORMATTING: Preserve all '<br>' tags exactly as positioned. Never translate or paraphrase these tags.
             7. ZERO ENGLISH TOLERANCE: Ensure total translation. If an original line was untranslatable in Pass 1, you MUST provide a professional, highly localized, or contextualized translation in Pass 2.
+            8. INTERRUPTED PHRASES & CONTINUITY: Subtitles often split sentences across consecutive lines or break mid-thought. Analyze surrounding lines to maintain smooth syntactical flow across block boundaries without robotic abruptness.
 
             ITEMS FOR SUBTITLE REFINEMENT AND RESTRUCTURING:
             ${JSON.stringify(itemsForRefinement)}`;
@@ -432,6 +433,7 @@ async function startServer() {
             5. SUBTITLE ECONOMY: Maintain brevity without sacrificing meaning. Ensure maximum readability for viewers within the duration of the subtitle display.
             6. FORMATTING: Preserve all '<br>' tags exactly as positioned. Never translate or paraphrase these tags.
             7. ZERO ENGLISH TOLERANCE: Ensure total translation. If an original line was untranslatable in Pass 1, you MUST provide a professional, highly localized, or contextualized translation in Pass 2.
+            8. INTERRUPTED PHRASES & CONTINUITY: Subtitles often split sentences across consecutive lines or break mid-thought. Analyze surrounding lines to maintain smooth syntactical flow across block boundaries without robotic abruptness.
 
             ITEMS FOR SUBTITLE REFINEMENT AND RESTRUCTURING:
             ${JSON.stringify(cleanedItems)}`;
