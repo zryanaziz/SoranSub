@@ -575,7 +575,13 @@ export default function App() {
         const item = updatedSubtitles[idx];
         if (item && item.text) {
           const cleaned = cleanSourceSubtitle(item.text);
-          if (cleaned !== item.text) {
+          if (cleaned.trim() === "") {
+            updatedSubtitles[idx] = { 
+              ...item, 
+              text: " ",
+              translatedText: " " 
+            };
+          } else if (cleaned !== item.text) {
             updatedSubtitles[idx] = { ...item, text: cleaned };
           }
         }
@@ -601,7 +607,14 @@ export default function App() {
           
           const endIdx = Math.min(startIdx + batchSize, indices.length);
           const currentBatchIndices = indices.slice(startIdx, endIdx);
-          const itemsToTranslate = currentBatchIndices.map(idx => ({
+          const activeBatchIndices = currentBatchIndices.filter(idx => {
+            const t = updatedSubtitles[idx].text;
+            return t && t.trim() !== "";
+          });
+
+          if (activeBatchIndices.length === 0) continue;
+
+          const itemsToTranslate = activeBatchIndices.map(idx => ({
             id: updatedSubtitles[idx].index || (idx + 1),
             text: updatedSubtitles[idx].text
           }));
@@ -617,7 +630,7 @@ export default function App() {
               });
               
               const failedIndices: number[] = [];
-              currentBatchIndices.forEach(originalIdx => {
+              activeBatchIndices.forEach(originalIdx => {
                 const originalItem = updatedSubtitles[originalIdx];
                 if (!originalItem) return;
 
@@ -798,8 +811,14 @@ export default function App() {
 
           const endIdx = Math.min(startIdx + batchSize, indices.length);
           const currentBatchIndices = indices.slice(startIdx, endIdx);
+          const activeRefineIndices = currentBatchIndices.filter(idx => {
+            const item = updatedSubtitles[idx];
+            return item && item.text && item.text.trim() !== "" && item.translatedText && item.translatedText.trim() !== "";
+          });
 
-          const itemsToRefine = currentBatchIndices.map(idx => {
+          if (activeRefineIndices.length === 0) continue;
+
+          const itemsToRefine = activeRefineIndices.map(idx => {
             const item = updatedSubtitles[idx];
             return {
               id: item.index || (idx + 1),
@@ -816,7 +835,7 @@ export default function App() {
                 refineMap.set(res.id, res.translatedText);
               });
 
-              currentBatchIndices.forEach(originalIdx => {
+              activeRefineIndices.forEach(originalIdx => {
                 const item = updatedSubtitles[originalIdx];
                 if (!item) return;
 
