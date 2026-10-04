@@ -758,11 +758,13 @@ export default function App() {
             const cleaned = cleanKurdishSubtitle(item.translatedText, item.text);
             updatedSubtitles[idx] = {
               ...item,
-              translatedText: cleaned
+              text: formatHyphenToRTL(item.text),
+              translatedText: formatHyphenToRTL(cleaned, item.text)
             };
           }
         });
         setSubtitles([...updatedSubtitles]);
+        setIsRtlHyphen(true);
 
         setProgress(100);
         setStatus({ type: 'success', message: `Translation complete! All ${totalSteps} subtitles translated.` });
@@ -848,18 +850,20 @@ export default function App() {
         }
       }
 
-      // Clean and polish subtitles across all processed blocks naturally (preserving standard dialogue hyphens)
+      // Clean and polish subtitles across all processed blocks naturally and format hyphens for RTL players
       indices.forEach(idx => {
         const item = updatedSubtitles[idx];
         if (item && item.translatedText && item.translatedText.trim()) {
           const cleaned = cleanKurdishSubtitle(item.translatedText, item.text);
           updatedSubtitles[idx] = {
             ...item,
-            translatedText: cleaned
+            text: formatHyphenToRTL(item.text),
+            translatedText: formatHyphenToRTL(cleaned, item.text)
           };
         }
       });
       setSubtitles([...updatedSubtitles]);
+      setIsRtlHyphen(true);
 
       setProgress(100);
       setStatus({ type: 'success', message: `2-Pass Pipeline complete! Successfully translated and refined all ${totalSteps} subtitles.` });
