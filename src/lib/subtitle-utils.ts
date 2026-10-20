@@ -266,22 +266,42 @@ export function cleanSourceSubtitle(text: string): string {
     let l = line.replace(/[ \t]+/g, ' ').trim();
     if (!l) return '';
 
-    // Strips speaker tags (e.g. "NAME:", "JOHN:", "SPEAKER 1:", "MAN - ")
-    l = l.replace(/^([A-Za-zÀ-ÿ0-9\s_\-\.]{1,30})[:\-]\s+/, '');
+    // Restore standard English punctuation if source line was previously formatted with Kurdish punctuation
+    if (/[A-Za-z]/.test(l) && !/[\u0621-\u064A\u067E-\u06D5]/.test(l)) {
+      l = l.replace(/؟/g, '?').replace(/،/g, ',').replace(/؛/g, ';');
+    }
 
     // Protect triple dots and unicode ellipsis
     l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
     l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
 
-    // Preserves and normalizes leading dialogue dashes (e.g., - Hello) to standard "- "
+    // Detect if line had a leading or trailing dialogue dash (in case RTL hyphen was previously applied to source)
     const hasLeadingDash = /^[-–—]\s*/.test(l);
-    if (hasLeadingDash) {
-      l = '- ' + l.replace(/^[-–—\s]+/, '');
-    } else {
-      l = l.replace(/^[-–—\s]+/, '');
-    }
-    // Removes dangling edge symbols while preserving internal punctuation
+    const hasTrailingDash = /\s*[-–—]$/.test(l);
+    const hasDialogueDash = hasLeadingDash || hasTrailingDash;
+
+    // Strip leading/trailing dashes
+    l = l.replace(/^[-–—\s]+/, '');
     l = l.replace(/[-–—\s]+$/, '');
+
+    // If source English line had trailing punctuation moved to the start (e.g. ".Okay. Yeah"), move it back to the end
+    if (/[A-Za-z]/.test(l) && !/[\u0621-\u064A\u067E-\u06D5]/.test(l)) {
+      const movedLeadingPunct = l.match(/^([\.,!;:])+/);
+      if (movedLeadingPunct) {
+        const punct = movedLeadingPunct[0];
+        l = l.slice(punct.length).trimStart();
+        if (!/[\.,!\?;:]$|___ELLIPSIS_THREE___$|___ELLIPSIS_UNICODE___$/.test(l)) {
+          l = `${l}${punct}`;
+        }
+      }
+    }
+
+    // Strips uppercase speaker tags before a colon only (e.g. "NAME:", "JOHN:", "SPEAKER 1:") without matching hyphens or newlines
+    l = l.replace(/^([A-Z][A-Z0-9# ]{1,24}):[ \t]+/, '');
+
+    if (hasDialogueDash && l.trim()) {
+      l = '- ' + l.trim();
+    }
 
     // Restore protected ellipsis
     l = l.replace(/___ELLIPSIS_THREE___/g, '...');
@@ -291,6 +311,62 @@ export function cleanSourceSubtitle(text: string): string {
   }).filter(line => line.length > 0);
 
   return cleanedLines.join('\n');
+}
+
+/**
+ * Ensures that if a source subtitle block has multiple lines (e.g. 2 dialogue lines)
+ * and Pass 1 translated all lines, Pass 2 refinement never drops a line.
+ */
+export function preserveMultiLineRefinement(
+  refinedText: string,
+  pass1Text: string,
+  sourceText?: string
+): string {
+  if (!refinedText) return pass1Text || "";
+  if (!pass1Text) return refinedText;
+
+  const normRefined = refinedText.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
+  const normPass1 = pass1Text.replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
+  const normSource = (sourceText || '').replace(/\\N|\\n|\/N|\/n|<br\s*\/?>/gi, '\n');
+
+  const refinedLines = normRefined.split('\n').map(l => l.trim()).filter(Boolean);
+  const pass1Lines = normPass1.split('\n').map(l => l.trim()).filter(Boolean);
+  const sourceLines = normSource.split('\n').map(l => l.trim()).filter(Boolean);
+
+  const expectedLineCount = sourceLines.length > 1 ? sourceLines.length : pass1Lines.length;
+
+  if (expectedLineCount >= 2 && pass1Lines.length >= 2 && refinedLines.length < expectedLineCount) {
+    if (expectedLineCount === 2 && pass1Lines.length === 2 && refinedLines.length === 1) {
+      const singleLine = refinedLines[0];
+      const p0HasQ = /[?؟]/.test(pass1Lines[0]) || (sourceLines[0] && /[?؟]/.test(sourceLines[0]));
+      const p1HasQ = /[?؟]/.test(pass1Lines[1]) || (sourceLines[1] && /[?؟]/.test(sourceLines[1]));
+      const singleHasQ = /[?؟]/.test(singleLine);
+
+      // Determine whether the single refined line corresponds to line 0 or line 1
+      const tokenize = (s: string) => s.replace(/[^\u0621-\u064A\u067E-\u06D5a-zA-Z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+      const singleWords = new Set(tokenize(singleLine));
+      const overlap0 = tokenize(pass1Lines[0]).filter(w => singleWords.has(w)).length;
+      const overlap1 = tokenize(pass1Lines[1]).filter(w => singleWords.has(w)).length;
+
+      if (p0HasQ && !p1HasQ && !singleHasQ) {
+        return `${pass1Lines[0]}\n${singleLine}`;
+      }
+      if (!p0HasQ && p1HasQ && !singleHasQ) {
+        return `${singleLine}\n${pass1Lines[1]}`;
+      }
+      if (overlap1 > overlap0) {
+        return `${pass1Lines[0]}\n${singleLine}`;
+      }
+      if (overlap0 > overlap1) {
+        return `${singleLine}\n${pass1Lines[1]}`;
+      }
+      // Default: usually the model kept the second response line and dropped the first prompt line
+      return `${pass1Lines[0]}\n${singleLine}`;
+    }
+    return pass1Lines.join('\n');
+  }
+
+  return refinedText;
 }
 
 /**
@@ -304,7 +380,7 @@ export function hasAlreadyMirroredBrackets(str: string): boolean {
   }
   const bracketClose = str.indexOf(']');
   const bracketOpen = str.indexOf('[');
-  if (bracketClose !== -1 && (bracketOpen === -1 || bracketClose < bracketOpen)) {
+  if (bracketClose !== -1 && (bracketOpen === -1 || bracketOpen < bracketOpen)) {
     return true;
   }
   const braceClose = str.indexOf('}');
@@ -337,7 +413,6 @@ export function cleanKurdishSubtitle(text: string, sourceText?: string): string 
   cleanText = cleanText.replace(/\(\s*(?:sighs?|crying|snickers?|whispers?|laughter|chuckles?|gasps?|groans?|screams?|applause|music|singing|coughing|throat|in [a-zA-Z]+|speaking [a-zA-Z]+|[a-zA-Z\s_\-]{2,30}|مۆسیقا|چەپڵە|پێکەنین|هاوار|گریان|دەنگی\s+[^\s\)]+|بێدەنگی|سۆز|تاریکی|هەناسەبڕکێ)\s*\)/gi, '');
   cleanText = cleanText.replace(/<[^>]*>/g, '');
   cleanText = cleanText.replace(/[♪♫\u266a\u266b]/g, '');
-  cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/gm, '');
 
   const sourceLines = sourceText ? sourceText.split('\n') : [];
   const lines = cleanText.split('\n');
@@ -345,14 +420,15 @@ export function cleanKurdishSubtitle(text: string, sourceText?: string): string 
     let l = line.replace(/[ \t]+/g, ' ').trim();
     if (!l) return '';
 
-    l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/, '');
+    // Strip only explicit uppercase speaker tags before a colon (never hyphens or multi-line text)
+    l = l.replace(/^(?:[-–—]\s*)?[A-Z][A-Z0-9# ]{1,24}:[ \t]+/, (m) => /^[-–—]/.test(m) ? '- ' : '');
 
     l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
     l = l.replace(/…/g, '___ELLIPSIS_UNICODE___');
 
     const leadingHyphen = Boolean(l.match(/^[-–—]\s*/));
     const trailingHyphen = Boolean(l.match(/\s*[-–—]$/));
-    const sourceHadHyphen = sourceLines[idx] ? Boolean(sourceLines[idx].trim().match(/^[-–—]\s*/)) : false;
+    const sourceHadHyphen = sourceLines[idx] ? Boolean(sourceLines[idx].trim().match(/^[-–—]\s*|\s*[-–—]$/)) : false;
     const hasHyphen = leadingHyphen || trailingHyphen || sourceHadHyphen;
 
     l = l.replace(/^[-–—\s]+/, '');
@@ -407,8 +483,6 @@ export function cleanAndFormatKurdishSubtitle(text: string, sourceText?: string)
   cleanText = cleanText.replace(/<[^>]*>/g, '');
   // Remove music notes
   cleanText = cleanText.replace(/[♪♫\u266a\u266b]/g, '');
-  // Remove speaker prefixes like "NAME: " or "ناوی کەس: "
-  cleanText = cleanText.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/gm, '');
 
   const sourceLines = sourceText ? sourceText.split('\n') : [];
   const lines = cleanText.split('\n');
@@ -416,8 +490,8 @@ export function cleanAndFormatKurdishSubtitle(text: string, sourceText?: string)
     let l = line.replace(/[ \t]+/g, ' ').trim();
     if (!l) return '';
 
-    // Remove any line-level speaker tag remaining
-    l = l.replace(/^([A-Za-zÀ-ÿ\u0600-\u06FF0-9\s_\-\.]{1,30})[:\-]\s+/, '');
+    // Remove only explicit uppercase speaker tags before a colon
+    l = l.replace(/^(?:[-–—]\s*)?[A-Z][A-Z0-9# ]{1,24}:[ \t]+/, (m) => /^[-–—]/.test(m) ? '- ' : '');
 
     // Protect ellipsis first
     l = l.replace(/\.\.\./g, '___ELLIPSIS_THREE___');
@@ -429,7 +503,7 @@ export function cleanAndFormatKurdishSubtitle(text: string, sourceText?: string)
     // displays the hyphen visually on the right side of the screen at the start of the sentence.
     const leadingHyphenMatch = Boolean(l.match(/^[-–—]\s*/));
     const trailingHyphenMatch = Boolean(l.match(/\s*[-–—]$/));
-    const sourceLineHadHyphen = sourceLines[idx] ? Boolean(sourceLines[idx].trim().match(/^[-–—]\s*/)) : false;
+    const sourceLineHadHyphen = sourceLines[idx] ? Boolean(sourceLines[idx].trim().match(/^[-–—]\s*|\s*[-–—]$/)) : false;
 
     const hasDialogueHyphen = leadingHyphenMatch || trailingHyphenMatch || sourceLineHadHyphen;
 
@@ -620,15 +694,22 @@ export function revertHyphenToLTR(text: string, sourceText?: string): string {
 
 export function stringifyASS(items: SubtitleItem[], useTranslation = true): string {
   const header = `[Script Info]
-Title: SoranSub Export (.ass)
+; This is an Advanced Sub Station Alpha v4+ script.
+Title: 
 ScriptType: v4.00+
-WrapStyle: 0
-ScaledBorderAndShadow: yes
-YCbCr Matrix: None
+PlayDepth: 0
+WrapStyle: 3
+ScaledBorderAndShadow: Yes
+YCbCr Matrix: TV.709
+PlayResX: 1920
+PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Calibri,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,10,1
+Style: Default,Roboto Medium,70,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,15,0,2,10,10,19,1
+Style: Song,Arial Rounded MT Bold,70,&H0042CCFF,&H000000FF,&H00000000,&H00000000,0,-1,0,0,100,100,0,0,1,15,1,2,10,10,53,1
+Style: Skills,Berlin Sans FB Demi,70,&H00FFFC05,&H000000FF,&H00000000,&H00000000,0,-1,0,0,100,100,0,0,1,15,3,2,10,10,53,1
+Style: NDBoldSmall,Chewy,60,&H00FFFFFF,&H000000FF,&H00767158,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,2,10,10,10,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

@@ -43,7 +43,8 @@ import {
   cleanSourceSubtitle,
   formatHyphenToRTL,
   revertHyphenToLTR,
-  stringifyASS
+  stringifyASS,
+  preserveMultiLineRefinement
 } from './lib/subtitle-utils';
 import { getMKVTracks, extractMKVSubtitle, mkvSubtitlesToSRT, MKVTrack } from './lib/mkv-utils';
 import { 
@@ -329,7 +330,7 @@ export default function App() {
           }
         }
       } catch (e) {
-        console.error("Error calling /api/gemini/has-key:", e);
+        // Backend proxy not active or reachable, continue to next check
       }
 
       // 3. Check for environment variables
@@ -641,7 +642,7 @@ export default function App() {
                 const originalText = originalItem.text.trim();
                 const translatedText = translated.trim();
 
-                const hasKurdish = /[\u0600-\u06FF]/.test(translatedText);
+                const hasKurdish = /[\u0621-\u064A\u067E-\u06D5]/.test(translatedText);
                 const hasLatinOriginal = /[a-zA-Z]/.test(originalText);
                 const isEcho = (originalText.length > 2 && originalText.toLowerCase() === translatedText.toLowerCase()) ||
                                (hasLatinOriginal && !hasKurdish && translatedText.replace(/[^a-zA-Z]/g, '').length > 0);
@@ -682,7 +683,7 @@ export default function App() {
                       const originalText = originalItem.text.trim();
                       const translatedText = text.trim();
                       
-                      const hasKurdishChar = /[\u0600-\u06FF]/.test(translatedText);
+                      const hasKurdishChar = /[\u0621-\u064A\u067E-\u06D5]/.test(translatedText);
                       const hasLatin = /[a-zA-Z]/.test(originalText);
                       const isStillEcho = (originalText.length > 2 && originalText.toLowerCase() === translatedText.toLowerCase()) ||
                                           (hasLatin && !hasKurdishChar && translatedText.replace(/[^a-zA-Z]/g, '').length > 0);
@@ -771,7 +772,6 @@ export default function App() {
             const cleaned = cleanKurdishSubtitle(item.translatedText, item.text);
             updatedSubtitles[idx] = {
               ...item,
-              text: formatHyphenToRTL(item.text),
               translatedText: formatHyphenToRTL(cleaned, item.text)
             };
           }
@@ -842,9 +842,10 @@ export default function App() {
                 const itemIndex = item.index || (originalIdx + 1);
                 const refined = refineMap.get(itemIndex);
                 if (refined !== undefined && refined.trim() !== '') {
+                  const multiLineSafe = preserveMultiLineRefinement(refined, item.translatedText || '', item.text);
                   updatedSubtitles[originalIdx] = {
                     ...item,
-                    translatedText: item.text.trim() === "" ? item.text : cleanKurdishSubtitle(refined, item.text)
+                    translatedText: item.text.trim() === "" ? item.text : cleanKurdishSubtitle(multiLineSafe, item.text)
                   };
                 }
               });
@@ -876,7 +877,6 @@ export default function App() {
           const cleaned = cleanKurdishSubtitle(item.translatedText, item.text);
           updatedSubtitles[idx] = {
             ...item,
-            text: formatHyphenToRTL(item.text),
             translatedText: formatHyphenToRTL(cleaned, item.text)
           };
         }
@@ -988,21 +988,13 @@ export default function App() {
     a.href = url;
     
     let downloadName = (fileName || (useTranslation ? 'translated.srt' : 'original.srt')).replace(/_Track\d+/gi, '');
+    downloadName = downloadName.replace(/\.(srt|vtt|sub|ass|txt)$/i, '');
     
     // Inject .ku and ensure .srt extension
     if (useTranslation) {
-      if (downloadName.includes('.')) {
-        downloadName = downloadName.substring(0, downloadName.lastIndexOf('.')) + '.ku.srt';
-      } else {
-        downloadName = downloadName + '.ku.srt';
-      }
-    } else if (!downloadName.toLowerCase().endsWith('.srt')) {
-      // Ensure original also ends in .srt if we are converting it
-      if (downloadName.includes('.')) {
-        downloadName = downloadName.substring(0, downloadName.lastIndexOf('.')) + '.srt';
-      } else {
-        downloadName = downloadName + '.srt';
-      }
+      downloadName = downloadName + '.ku.srt';
+    } else {
+      downloadName = downloadName + '.srt';
     }
     a.download = downloadName;
     document.body.appendChild(a);
@@ -1014,23 +1006,21 @@ export default function App() {
   const handleDownloadASS = () => {
     if (subtitles.length === 0) return;
     const content = stringifyASS(subtitles, true);
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob(['\uFEFF' + content], { type: 'text/x-ssa;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     
     let downloadName = (fileName || 'translated.srt').replace(/_Track\d+/gi, '');
-    if (downloadName.includes('.')) {
-      downloadName = downloadName.substring(0, downloadName.lastIndexOf('.')) + '.ku.ass';
-    } else {
-      downloadName = downloadName + '.ku.ass';
-    }
+    downloadName = downloadName.replace(/\.(srt|vtt|sub|ass|txt)$/i, '');
+    downloadName = downloadName + '.ku.ass';
+
     a.download = downloadName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    setStatus({ type: 'success', message: 'Downloaded ASS subtitle (.ass) with Calibri font successfully!' });
+    setStatus({ type: 'success', message: 'Downloaded ASS subtitle (.ass) successfully!' });
   };
 
   const handleCloseSubtitle = () => {
@@ -1483,7 +1473,7 @@ export default function App() {
               "flex items-center gap-1.5 px-2 md:px-2.5 py-1.5 md:py-2 bg-[#141414] text-[#E4E3E0] transition-all rounded-sm",
               "hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
             )}
-            title="Download Translated ASS Subtitle (.ass format with Calibri font)"
+            title="Download Translated ASS Subtitle (.ass format)"
           >
             <FileText size={14} />
             <span className="hidden sm:inline text-[9px] md:text-[10px] font-mono uppercase tracking-wider">

@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { moveTrailingPunctuationToStart, cleanKurdishSubtitle, cleanAndFormatKurdishSubtitle } from "../lib/subtitle-utils";
+import { moveTrailingPunctuationToStart, cleanKurdishSubtitle, cleanAndFormatKurdishSubtitle, preserveMultiLineRefinement } from "../lib/subtitle-utils";
 
 const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator and subtitle localization expert. Your absolute priority is to translate the input text into highly natural, idiomatic, flowing, and professional Sorani Kurdish as spoken in daily life, avoiding stiff, robotic, or literal word-for-word translations.\n\nCRITICAL Kurdish Sorani Localization Rules:\n1. GRAMMAR & WORD ORDER: Sorani Kurdish is strictly a Subject-Object-Verb (SOV) language. Restructure English sentences completely so that the verb is naturally placed at the end of the sentence or clause. Never keep English SVO structure.\n2. NATURAL IDIOMATIC PHRASING (NO LITERALISM): Convert English colloquialisms and idioms into their closest cultural equivalents in natural Sorani Kurdish. For example:\n   - 'Are you kidding me?' -> 'شۆخی دەکەیت؟' or 'گاڵتە دەکەیت؟' (NEVER 'ئایا تۆ لەگەڵ مندا گاڵتە دەکەیت؟')\n   - 'What's up?' -> 'چی هەیە؟' or 'بارودۆخ چۆنە؟'\n   - 'Oh my God!' -> 'خوایە گیان!' or 'ئەی خوایە!'\n   - 'Don't worry' -> 'نیگەران مەبە' or 'خەمت نەبێت'\n   - 'Shut up!' -> 'بێدەنگ بە!' or 'دەمت داخە!'\n   - 'Come on!' -> 'دەی!' or 'خێراکە!'\n3. PUNCTUATION & SCRIPT: Sorani is written Right-to-Left (RTL). Always use authentic Kurdish-specific punctuation marks naturally (e.g., '؟' for question mark, '،' for comma, '؛' for semicolon). Preserve dialogue hyphens naturally (e.g., '- Hello' -> '- سڵاو'). Do not move hyphens to the end of lines.\n4. ABBREVIATIONS: Smoothly transliterate English abbreviations (e.g., CIA, FBI, NASA, IT, AI) into phonetic Kurdish characters based on their spoken pronunciation (e.g., 'FBI' -> 'ئێف بی ئای', 'CIA' -> 'سی ئای ئەی', 'AI' -> 'ئەی ئای', 'TV' -> 'تی ڤی') instead of leaving them in English.\n5. SUBTITLE CONCISENESS: Subtitles need to be brief and easy to read in a short timeframe. Keep translation punchy, concise, and natural, keeping screen space and display speed in mind.\n6. LINE BREAKS: The '<br>' tag is a placeholder for a line break or newline. You MUST preserve '<br>' exactly in the output, properly integrated into the natural flow of the translated sentence. Do NOT delete or translate '<br>'.\n7. OUTPUT ONLY: Return ONLY the translated Sorani Kurdish text, completely clean of explanations, note prefixes, or quotes.";
 
@@ -224,10 +224,10 @@ export async function clientSideRefineBatch(
            - If a sentence or line ends with punctuation marks like ',', '،', '.', '...', '!', '؛', move that punctuation mark to the ABSOLUTE START of the Kurdish line (e.g. '.سڵاو'). Question marks ('?' or '؟') MUST remain at the end (e.g. 'چۆنیت؟').
            - Preserve standard leading dialogue dashes naturally (e.g., '- Hello' -> '- سڵاو'). Do not move hyphens to the end of lines.
            - If a sentence or line STARTS with numbers or number expressions (e.g., '100 years' -> '100 ساڵ', '10 months' -> '10 مانگ', '100'), move that leading number/phrase to the ABSOLUTE END of the line (e.g. 'لەمەوبەر 100 ساڵ'). This ensures that on RTL video players, the number renders visually at the start of the sentence on screen.
-        5. SUBTITLE ECONOMY: Maintain brevity without sacrificing meaning. Ensure maximum readability for viewers within the duration of the subtitle display.
-        6. FORMATTING: Preserve all '<br>' tags exactly as positioned. Never translate or paraphrase these tags.
+        5. SUBTITLE ECONOMY: Keep phrasing concise and natural, but NEVER delete or skip any sentence, clause, or speaker turn.
+        6. MULTI-LINE & DIALOGUE PRESERVATION (CRITICAL): Preserve all '<br>' tags and line counts exactly as positioned. If 'originalText' or 'translatedKurdish' has 2 lines separated by '<br>' (such as two dialogue lines like '- All right. You ready?<br>- Okay. Yeah.'), your 'translatedText' MUST also have 2 lines separated by '<br>' translating BOTH lines completely. NEVER omit, drop, or merge separate lines within a block.
         7. ZERO ENGLISH TOLERANCE: Ensure total translation. If an original line was untranslatable in Pass 1, you MUST provide a professional, highly localized, or contextualized translation in Pass 2.
-        8. INTERRUPTED PHRASES & CONTINUITY: Subtitles often split sentences across consecutive lines or break mid-thought. Analyze surrounding lines to maintain smooth syntactical flow across block boundaries without robotic abruptness.
+        8. INTERRUPTED PHRASES & CONTINUITY: When a single sentence is split across consecutive subtitle IDs, analyze surrounding blocks to maintain smooth syntactical flow across block boundaries. However, NEVER delete a line or merge two speakers' lines inside a multi-line block.
 
         ITEMS FOR SUBTITLE REFINEMENT AND RESTRUCTURING:
         ${JSON.stringify(cleanedItems)}`;
@@ -245,15 +245,16 @@ export async function clientSideRefineBatch(
       const result = extractJson(response.text || "[]");
       if (Array.isArray(result) && result.length === cleanedItems.length) {
         return result.map((item: any) => {
-          const matchedOriginal = cleanedItems.find((ci: any) => Number(ci.id) === Number(item.id))?.originalText;
+          const matchedItem = cleanedItems.find((ci: any) => Number(ci.id) === Number(item.id));
+          const matchedOriginal = matchedItem?.originalText ? String(matchedItem.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined;
+          const matchedPass1 = matchedItem?.translatedKurdish ? String(matchedItem.translatedKurdish).replace(/<br\s*\/?>/gi, '\n') : '';
+          const rawRefined = typeof item.translatedText === 'string'
+            ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
+            : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
+          const multiLineSafe = preserveMultiLineRefinement(rawRefined, matchedPass1, matchedOriginal);
           return {
             id: Number(item.id),
-            translatedText: cleanKurdishSubtitle(
-              typeof item.translatedText === 'string' 
-                ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n') 
-                : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n'),
-              matchedOriginal ? String(matchedOriginal).replace(/<br\s*\/?>/gi, '\n') : undefined
-            )
+            translatedText: cleanKurdishSubtitle(multiLineSafe, matchedOriginal)
           };
         });
       }
