@@ -20,6 +20,7 @@ const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator a
 
 const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
 const MODELS = [
+  "gemini-3.8-flash",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash",
@@ -127,13 +128,15 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 5, delay = 1500): Pr
 }
 
 /**
- * Intelligent fall-back that tries models strictly in sequence per-request:
- * 1. gemini-3.5-flash-lite
- * 2. gemini-3.1-flash-lite
- * 3. gemini-2.5-flash-lite
- * 4. gemini-3.7-flash
- * 5. gemini-3.6-flash
- * 6. gemini-3.5-flash
+ * Intelligent fall-back that prioritizes flagship models from best to good,
+ * then falls back to flash-lite models when rate/quota limits are reached:
+ * 1. gemini-3.8-flash (Default)
+ * 2. gemini-3.7-flash
+ * 3. gemini-3.6-flash
+ * 4. gemini-3.5-flash
+ * 5. gemini-3.5-flash-lite
+ * 6. gemini-3.1-flash-lite
+ * 7. gemini-2.5-flash-lite
  */
 async function callGeminiWithModelFallback<T>(
   apiKey: string,
@@ -141,17 +144,18 @@ async function callGeminiWithModelFallback<T>(
 ): Promise<T> {
   const ai = getAI(apiKey);
   let lastError: any = null;
+  const startIdx = currentModelIndex;
 
-  // Always start with primary default model (index 0) and cascade sequentially
   for (let pass = 1; pass <= 2; pass++) {
-    for (let i = 0; i < MODELS.length; i++) {
-      const modelName = MODELS[i];
-      currentModelIndex = i;
+    for (let offset = 0; offset < MODELS.length; offset++) {
+      const idx = pass === 1 ? (startIdx + offset) % MODELS.length : offset;
+      const modelName = MODELS[idx];
+      currentModelIndex = idx;
 
       try {
         if (pass > 1) {
           // Pass 2 includes a small cool-off delay
-          const delayTime = 1000 * (i + 1);
+          const delayTime = 1000 * (offset + 1);
           console.log(`[Cooldown API] Waiting ${delayTime}ms before retrying ${modelName}...`);
           await new Promise(resolve => setTimeout(resolve, delayTime));
         }
@@ -167,6 +171,8 @@ async function callGeminiWithModelFallback<T>(
         if (errorMsg.includes('API key not valid') || errorMsg.includes('API_KEY_INVALID')) {
           throw new Error("Invalid API Key. Please check your configuration.");
         }
+        // Advance currentModelIndex to next model when limit/error occurs
+        currentModelIndex = (idx + 1) % MODELS.length;
       }
     }
   }
