@@ -6,7 +6,6 @@ const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator a
 const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
 
 const MODELS = [
-  "gemini-4-argon",
   "gemini-3.8-flash",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
@@ -70,14 +69,13 @@ function extractJson(text: string): any {
 /**
  * Intelligent client-side fallback that prioritizes flagship models from best to good,
  * then falls back to flash-lite models when rate/quota limits are reached:
- * 1. gemini-4-argon (Default)
- * 2. gemini-3.8-flash
- * 3. gemini-3.7-flash
- * 4. gemini-3.6-flash
- * 5. gemini-3.5-flash
- * 6. gemini-3.5-flash-lite
- * 7. gemini-3.1-flash-lite
- * 8. gemini-2.5-flash-lite
+ * 1. gemini-3.8-flash (Default)
+ * 2. gemini-3.7-flash
+ * 3. gemini-3.6-flash
+ * 4. gemini-3.5-flash
+ * 5. gemini-3.5-flash-lite
+ * 6. gemini-3.1-flash-lite
+ * 7. gemini-2.5-flash-lite
  */
 async function callClientGeminiWithModelFallback<T>(
   apiKey: string,
