@@ -6,11 +6,21 @@ const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator a
 const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
 
 const MODELS = [
-  "gemini-3.8-flash",
   "gemini-3.1-flash-lite",
-  "gemini-flash-latest"
+  "gemini-3.8-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-3-flash-preview",
+  "gemini-flash-lite-latest",
+  "gemini-flash-latest",
+  "gemini-3.1-pro-preview",
+  "gemini-2.5-pro"
 ];
 let currentModelIndex = 0;
+const modelCooldownUntil = new Map<string, number>();
+const unsupportedModels = new Set<string>();
 
 export function getCurrentModel() {
   return MODELS[currentModelIndex];
@@ -63,11 +73,8 @@ function extractJson(text: string): any {
 }
 
 /**
- * Intelligent client-side fallback that starts from the last working model
- * and cascades across active models:
- * 1. gemini-3.8-flash
- * 2. gemini-3.1-flash-lite
- * 3. gemini-flash-latest
+ * Intelligent client-side fallback that immediately skips to another model when
+ * a model experiences high demand (503 / UNAVAILABLE) or reaches quota (429 / RESOURCE_EXHAUSTED).
  */
 async function callClientGeminiWithModelFallback<T>(
   apiKey: string,
@@ -75,32 +82,83 @@ async function callClientGeminiWithModelFallback<T>(
 ): Promise<T> {
   const ai = new GoogleGenAI({ apiKey });
   let lastError: any = null;
-  const startIndex = currentModelIndex;
 
-  for (let pass = 1; pass <= 2; pass++) {
+  for (let pass = 1; pass <= 4; pass++) {
+    const startIndex = currentModelIndex;
+    let triedAnyInPass = false;
+
     for (let offset = 0; offset < MODELS.length; offset++) {
       const idx = (startIndex + offset) % MODELS.length;
       const modelName = MODELS[idx];
 
+      if (unsupportedModels.has(modelName)) {
+        continue;
+      }
+
+      // On Pass 1, skip models that recently reported 503 high demand or 429 quota
+      const cooldownExpires = modelCooldownUntil.get(modelName) || 0;
+      if (pass === 1 && Date.now() < cooldownExpires) {
+        continue;
+      }
+
+      triedAnyInPass = true;
+
       try {
-        if (pass > 1) {
-          const delayTime = 1000 * (offset + 1);
-          await new Promise(resolve => setTimeout(resolve, delayTime));
+        if (pass > 1 && offset === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1200 * (pass - 1)));
         }
         const res = await fn(ai, modelName);
+        modelCooldownUntil.delete(modelName);
         currentModelIndex = idx;
         return res;
       } catch (err: any) {
         lastError = err;
-        const errorMsg = err.message || String(err);
-        if (errorMsg.includes('API key not valid') || errorMsg.includes('API_KEY_INVALID')) {
+        const errorMsg = (err.message || String(err)).toLowerCase();
+
+        if (errorMsg.includes('api key not valid') || errorMsg.includes('api_key_invalid')) {
           throw new Error("Invalid API Key. Please enter a valid Gemini API Key in the settings.");
         }
+
+        // If model is not found / unsupported for this key, skip it permanently
+        if (errorMsg.includes('404') || errorMsg.includes('not_found') || errorMsg.includes('not found') || errorMsg.includes('not supported')) {
+          unsupportedModels.add(modelName);
+          currentModelIndex = (idx + 1) % MODELS.length;
+          continue;
+        }
+
+        // If model reached quota / rate limit (429), put on 90s cooldown and immediately skip to next model
+        if (errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('resource_exhausted') || errorMsg.includes('rate limit')) {
+          modelCooldownUntil.set(modelName, Date.now() + 90_000);
+          currentModelIndex = (idx + 1) % MODELS.length;
+          continue;
+        }
+
+        // If model has high demand / overloaded / 503, put on 45s cooldown and immediately skip to next model
+        if (
+          errorMsg.includes('503') ||
+          errorMsg.includes('unavailable') ||
+          errorMsg.includes('high demand') ||
+          errorMsg.includes('overloaded') ||
+          errorMsg.includes('500') ||
+          errorMsg.includes('502') ||
+          errorMsg.includes('504') ||
+          errorMsg.includes('internal')
+        ) {
+          modelCooldownUntil.set(modelName, Date.now() + 45_000);
+          currentModelIndex = (idx + 1) % MODELS.length;
+          continue;
+        }
+
+        currentModelIndex = (idx + 1) % MODELS.length;
       }
+    }
+
+    if (!triedAnyInPass) {
+      modelCooldownUntil.clear();
     }
   }
 
-  throw lastError || new Error("All client-side Gemini fallback models were rate-limited or failed. Please try again in a few seconds.");
+  throw lastError || new Error("All client-side Gemini fallback models are currently experiencing high demand or quota limits. Please try again in a few seconds.");
 }
 
 /**

@@ -555,8 +555,24 @@ export default function App() {
               if (workerIdx > 0) {
                 await new Promise(resolve => setTimeout(resolve, workerIdx * 350));
               }
-              // Perform translation pass on this batch
-              const results = await translateBatch(itemsToTranslate);
+              // Perform translation pass on this batch (with automatic sub-batch split recovery on high demand)
+              let results: { id: number; translatedText: string }[];
+              try {
+                results = await translateBatch(itemsToTranslate);
+              } catch (batchErr: any) {
+                const msg = String(batchErr?.message || batchErr).toLowerCase();
+                if (msg.includes('invalid api key') || msg.includes('api_key_invalid')) {
+                  throw batchErr;
+                }
+                // Wait briefly and split batch into two smaller halves so alternative models process faster
+                await new Promise(resolve => setTimeout(resolve, 1800));
+                const mid = Math.ceil(itemsToTranslate.length / 2);
+                const firstHalf = itemsToTranslate.slice(0, mid);
+                const secondHalf = itemsToTranslate.slice(mid);
+                const res1 = firstHalf.length > 0 ? await translateBatch(firstHalf) : [];
+                const res2 = secondHalf.length > 0 ? await translateBatch(secondHalf) : [];
+                results = [...res1, ...res2];
+              }
               
               const resultsMap = new Map<number, string>();
               results.forEach(res => {
