@@ -1,0 +1,554 @@
+import express from "express";
+import { createServer as createViteServer } from "vite";
+import fs from "fs";
+import path from "path";
+import { GoogleGenAI, Type } from "@google/genai";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+import { 
+  cleanAndFormatKurdishSubtitle, 
+  cleanKurdishSubtitle, 
+  cleanSourceSubtitle, 
+  moveTrailingPunctuationToStart, 
+  hasAlreadyMirroredBrackets,
+  preserveMultiLineRefinement
+} from "./src/lib/subtitle-utils";
+
+const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator and subtitle localization expert. Your absolute priority is to translate the input text into highly natural, idiomatic, flowing, and professional Sorani Kurdish as spoken in daily life, avoiding stiff, robotic, or literal word-for-word translations.\n\nCRITICAL Kurdish Sorani Localization Rules:\n1. GRAMMAR & WORD ORDER: Sorani Kurdish is strictly a Subject-Object-Verb (SOV) language. Restructure English sentences completely so that the verb is naturally placed at the end of the sentence or clause. Never keep English SVO structure.\n2. NATURAL IDIOMATIC PHRASING (NO LITERALISM): Convert English colloquialisms and idioms into their closest cultural equivalents in natural Sorani Kurdish. For example:\n   - 'Are you kidding me?' -> 'شۆخی دەکەیت؟' or 'گاڵتە دەکەیت؟' (NEVER 'ئایا تۆ لەگەڵ مندا گاڵتە دەکەیت؟')\n   - 'What's up?' -> 'چی هەیە؟' or 'بارودۆخ چۆنە؟'\n   - 'Oh my God!' -> 'خوایە گیان!' or 'ئەی خوایە!'\n   - 'Don't worry' -> 'نیگەران مەبە' or 'خەمت نەبێت'\n   - 'Shut up!' -> 'بێدەنگ بە!' or 'دەمت داخە!'\n   - 'Come on!' -> 'دەی!' or 'خێراکە!'\n3. PUNCTUATION & SCRIPT: Sorani is written Right-to-Left (RTL). Always use authentic Kurdish-specific punctuation marks naturally (e.g., '؟' for question mark, '،' for comma, '؛' for semicolon). Preserve dialogue hyphens naturally (e.g., '- Hello' -> '- سڵاو'). Do not move hyphens to the end of lines.\n4. ABBREVIATIONS: Smoothly transliterate English abbreviations (e.g., CIA, FBI, NASA, IT, AI) into phonetic Kurdish characters based on their spoken pronunciation (e.g., 'FBI' -> 'ئێف بی ئای', 'CIA' -> 'سی ئای ئەی', 'AI' -> 'ئەی ئای', 'TV' -> 'تی ڤی') instead of leaving them in English.\n5. SUBTITLE CONCISENESS: Subtitles need to be brief and easy to read in a short timeframe. Keep translation punchy, concise, and natural, keeping screen space and display speed in mind.\n6. LINE BREAKS: The '<br>' tag is a placeholder for a line break or newline. You MUST preserve '<br>' exactly in the output, properly integrated into the natural flow of the translated sentence. Do NOT delete or translate '<br>'.\n7. OUTPUT ONLY: Return ONLY the translated Sorani Kurdish text, completely clean of explanations, note prefixes, or quotes.";
+
+const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
+const MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-2.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite"
+];
+let currentModelIndex = 0;
+
+function getCurrentModel() {
+  return MODELS[currentModelIndex];
+}
+
+function rotateModel() {
+  currentModelIndex = (currentModelIndex + 1) % MODELS.length;
+  console.log(`Rotating to next model on server: ${MODELS[currentModelIndex]}`);
+  return MODELS[currentModelIndex];
+}
+
+function extractJson(text: string): any {
+  try {
+    const trimmed = text.trim();
+    if (trimmed.startsWith('```json')) {
+      const content = trimmed.substring(7, trimmed.length - 3);
+      return JSON.parse(content);
+    }
+    return JSON.parse(trimmed);
+  } catch (e) {
+    const match = text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch (innerE) {
+        throw new Error(`Failed to parse extracted JSON: ${innerE}`);
+      }
+    }
+    throw e;
+  }
+}
+
+const BATCH_SCHEMA = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      id: { type: Type.INTEGER },
+      translatedText: { type: Type.STRING },
+    },
+    required: ["id", "translatedText"],
+  }
+};
+
+function getAI(clientApiKey?: string) {
+  const apiKey = clientApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY || "";
+  if (!apiKey) {
+    throw new Error("Gemini API key is not configured. Please enter your manual API key in the app.");
+  }
+  return new GoogleGenAI({ 
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
+    }
+  });
+}
+
+const modelCooldownUntil = new Map<string, number>();
+
+function recordModelCooldown(modelName: string, errorMsg: string) {
+  const isQuota = errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED') || errorMsg.includes('rate limit');
+  const isOverloaded = errorMsg.includes('503') || errorMsg.includes('unavailable') || errorMsg.includes('overloaded');
+  const isNotFound = errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('NOT_FOUND') || errorMsg.includes('is not supported');
+
+  if (isNotFound) {
+    modelCooldownUntil.set(modelName, Date.now() + 3600_000);
+  } else if (isQuota) {
+    const retryMatch = errorMsg.match(/retry in ([0-9.]+)s/i) || errorMsg.match(/"retryDelay"\s*:\s*"([0-9.]+)s"/i);
+    const retrySeconds = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 55;
+    const cooldownMs = Math.min(Math.max(retrySeconds * 1000, 15000), 65000);
+    modelCooldownUntil.set(modelName, Date.now() + cooldownMs);
+  } else if (isOverloaded) {
+    modelCooldownUntil.set(modelName, Date.now() + 12000);
+  }
+}
+
+async function withRetry<T>(fn: () => Promise<T>, retries = 1, delay = 1000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    const errorMsg = error.message || String(error);
+    const isQuotaOrOverload =
+      errorMsg.includes('429') ||
+      errorMsg.includes('quota') ||
+      errorMsg.includes('RESOURCE_EXHAUSTED') ||
+      errorMsg.includes('rate limit') ||
+      errorMsg.includes('503') ||
+      errorMsg.includes('unavailable') ||
+      errorMsg.includes('overloaded') ||
+      errorMsg.includes('404') ||
+      errorMsg.includes('not found') ||
+      errorMsg.includes('NOT_FOUND');
+
+    // Immediately hand off to next model on quota, overload, or 404 instead of waiting on the same model
+    if (isQuotaOrOverload) {
+      throw error;
+    }
+
+    const isRetryable =
+      errorMsg.includes('500') ||
+      errorMsg.includes('internal error') ||
+      errorMsg.includes('length mismatch');
+
+    if (retries > 0 && isRetryable) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return withRetry(fn, retries - 1, delay * 1.5);
+    }
+
+    if (errorMsg.includes('API key not valid') || errorMsg.includes('API_KEY_INVALID')) {
+      throw new Error("Invalid API Key. Please check your configuration.");
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Intelligent fall-back that tries flagship models from best to good,
+ * automatically respecting rate-limit cooldown windows and cascading to flash-lite models:
+ * 1. gemini-3.8-flash (Default)
+ * 2. gemini-3.7-flash
+ * 3. gemini-3.6-flash
+ * 4. gemini-3.5-flash
+ * 5. gemini-3.5-flash-lite
+ * 6. gemini-3.1-flash-lite
+ * 7. gemini-2.5-flash-lite
+ */
+async function callGeminiWithModelFallback<T>(
+  apiKey: string,
+  fn: (ai: any, modelName: string) => Promise<T>
+): Promise<T> {
+  const ai = getAI(apiKey);
+  let lastError: any = null;
+
+  for (let pass = 1; pass <= 2; pass++) {
+    for (let i = 0; i < MODELS.length; i++) {
+      const modelName = MODELS[i];
+      const cooldownUntil = modelCooldownUntil.get(modelName) || 0;
+
+      // On Pass 1, skip models that are actively in a rate-limit or overload cooldown window
+      if (pass === 1 && Date.now() < cooldownUntil) {
+        continue;
+      }
+
+      currentModelIndex = i;
+
+      try {
+        if (pass > 1) {
+          const delayTime = 1200 * (i + 1);
+          await new Promise(resolve => setTimeout(resolve, delayTime));
+        }
+
+        const res = await withRetry(() => fn(ai, modelName), 1, 1000);
+        modelCooldownUntil.delete(modelName);
+        return res;
+      } catch (err: any) {
+        lastError = err;
+        const errorMsg = err.message || String(err);
+        recordModelCooldown(modelName, errorMsg);
+
+        // If the API key is completely invalid, do not continue trying secondary models.
+        if (errorMsg.includes('API key not valid') || errorMsg.includes('API_KEY_INVALID')) {
+          throw new Error("Invalid API Key. Please check your configuration.");
+        }
+      }
+    }
+  }
+
+  throw lastError || new Error("All available Gemini models are currently exhausted or rate-limited. Please retry in a few seconds.");
+}
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+
+  app.use(express.json({ limit: '10mb' }));
+
+  // API endpoint to save subtitles to the workspace
+  app.post("/api/save-subtitles", (req, res) => {
+    try {
+      const { fileName, content } = req.body;
+      if (!fileName || !content) {
+        return res.status(400).json({ error: "Missing filename or content" });
+      }
+
+      // Ensure fileName is safe (basic check)
+      const safeName = path.basename(fileName);
+      const filePath = path.join(process.cwd(), safeName);
+
+      fs.writeFileSync(filePath, content);
+      console.log(`Saved ${safeName} to workspace`);
+      res.json({ success: true, path: filePath });
+    } catch (error: any) {
+      console.error("Error saving subtitles:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Check if API key is configured on server
+  app.get("/api/gemini/has-key", (req, res) => {
+    const hasEnvKey = !!(process.env.GEMINI_API_KEY || process.env.API_KEY);
+    res.json({ hasKey: hasEnvKey });
+  });
+
+  // Translate individual block on server
+  app.post("/api/gemini/translate", async (req, res) => {
+    try {
+      const { text, apiKey } = req.body;
+      if (text === undefined) {
+        return res.status(400).json({ error: "Missing text to translate" });
+      }
+
+      if (String(text).trim() === '') {
+        return res.json({ translatedText: text });
+      }
+
+      const cleanedText = text.replace(/\n/g, '<br>');
+      const result = await callGeminiWithModelFallback(apiKey, async (ai, modelName) => {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: [{ role: "user", parts: [{ text: cleanedText }] }],
+          config: {
+            systemInstruction: SYSTEM_INSTRUCTION
+          }
+        });
+
+        const translated = response.text || text;
+        return cleanKurdishSubtitle(translated.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n'), text);
+      });
+
+      res.json({ translatedText: result });
+    } catch (error: any) {
+      console.error("Translation API error:", error);
+      res.status(500).json({ error: error.message || "Translation failed" });
+    }
+  });
+
+  // Translate and refine batch (2-Pass Pipeline) on server
+  app.post("/api/gemini/translate-refine-batch", async (req, res) => {
+    try {
+      const { items, apiKey, shouldRefine = true } = req.body;
+      if (!Array.isArray(items)) {
+        return res.status(400).json({ error: "Missing or invalid items array" });
+      }
+
+      const emptyItems = items.filter((item: any) => String(item.text).trim() === '');
+      const activeItems = items.filter((item: any) => String(item.text).trim() !== '');
+
+      const emptyResults = emptyItems.map((item: any) => ({
+        id: Number(item.id),
+        translatedText: String(item.text)
+      }));
+
+      if (activeItems.length === 0) {
+        return res.json({ results: emptyResults });
+      }
+
+      // Pre-process: replace actual newlines with "<br>" placeholder to prevent Gemini from thinking
+      // they are separate list elements, lines to be split, or throwing off the JSON schema structures.
+      const cleanedItems = activeItems.map((item: any) => ({
+        id: Number(item.id),
+        text: String(item.text).replace(/\n/g, '<br>')
+      }));
+
+      // PASS 1: Translate English to Kurdish Sorani
+      const pass1Results = await callGeminiWithModelFallback(apiKey, async (ai, modelName) => {
+        const translatePrompt = `You are a native Sorani Kurdish subtitle translator.
+          Your task is to TRANSLATE the following ${cleanedItems.length} English subtitle objects into Kurdish Sorani (Central Kurdish).
+
+          CRITICAL RULES:
+          1. Under no circumstances should you echo the English text in 'translatedText'.
+          2. Translate every item fully and faithfully into Kurdish script.
+          3. Keep '<br>' tags exactly intact. Do not delete them.
+
+          INPUT SUBTITLE ITEMS:
+          ${JSON.stringify(cleanedItems)}`;
+
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: [{ role: "user", parts: [{ text: translatePrompt }] }],
+          config: {
+            systemInstruction: "You are a professional, senior Kurdish Sorani translator. Translate the input JSON array of objects with 'id' and 'text' into Kurdish Sorani, returning a JSON array of objects with 'id' and 'translatedText'. DO NOT echo the English.",
+            responseMimeType: "application/json",
+            responseSchema: BATCH_SCHEMA,
+          }
+        });
+
+        const result = extractJson(response.text || "[]");
+        if (Array.isArray(result) && result.length > 0) {
+          const resultMap = new Map<number, string>();
+          result.forEach((r: any) => {
+            if (r && r.id !== undefined && r.translatedText !== undefined) {
+              resultMap.set(Number(r.id), typeof r.translatedText === 'string' ? r.translatedText : String(r.translatedText));
+            }
+          });
+          if (resultMap.size >= Math.max(1, Math.floor(cleanedItems.length * 0.8))) {
+            return cleanedItems.map((ci: any) => ({
+              id: Number(ci.id),
+              translatedText: resultMap.get(Number(ci.id)) ?? ci.text
+            }));
+          }
+        }
+        throw new Error(`Pass 1 Translation batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
+      });
+
+      // If refinement is disabled, return Pass 1 results directly mapped with formatting stripped
+      if (!shouldRefine) {
+        const pass1OnlyResults = pass1Results.map((item: any) => ({
+          id: Number(item.id),
+          translatedText: moveTrailingPunctuationToStart(item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n'))
+        }));
+        return res.json({ results: [...emptyResults, ...pass1OnlyResults] });
+      }
+
+      // Prepare items for Pass 2 (Refinement)
+      const itemsForRefinement = cleanedItems.map((item: any) => {
+        const translatedObj = pass1Results.find((r: any) => Number(r.id) === Number(item.id));
+        return {
+          id: Number(item.id),
+          originalText: item.text,
+          translatedKurdish: translatedObj ? translatedObj.translatedText : ""
+        };
+      });
+
+      // PASS 2: Refine the Kurdish translation for perfect natural flow, SOV ordering, and right-to-left punctuation formatting
+      let refinedResults;
+      try {
+        refinedResults = await callGeminiWithModelFallback(apiKey, async (ai, modelName) => {
+          const refinePrompt = `You are a native Kurdish Sorani subtitle localization and refinement specialist.
+            Your task is to review and edit the translated Kurdish subtitles to make them highly natural, idiomatic, flowing, and professional.
+
+            STANDARDS FOR PERFECT REFINEMENT:
+            1. LINGUISTIC PRECISION (SOV): English is Subject-Verb-Object (SVO), while Kurdish Sorani is Subject-Object-Verb (SOV). You MUST completely restructure all sentences to place the verb appropriately at the end. DO NOT allow SVO remnants.
+            2. NATIVE IDIOMATIC FLOW: Discard all literal, word-for-word, or "translated-sounding" phrasing. Replace with authentic, natural conversational Kurdish used in high-quality media. If an English idiom lacks a direct counterpart, capture the underlying meaning using appropriate Kurdish imagery/idioms.
+            3. REGISTER ADAPTATION: Adapt the tone based on the context implied by the source text (e.g., formal dialogue should be rendered formally; casual slang should be rendered with modern conversational equivalents).
+            4. RTL, PUNCTUATION & NUMBER INTEGRITY: This is a strict RTL language. FOR VIDEO PLAYER COMPATIBILITY:
+               - If a sentence or line ends with punctuation marks like ',', '،', '.', '...', '!', '؛', move that punctuation mark to the ABSOLUTE START of the Kurdish line (e.g. '.سڵاو'). Question marks ('?' or '؟') MUST remain at the end (e.g. 'چۆنیت؟').
+               - Preserve standard leading dialogue dashes naturally (e.g., '- Hello' -> '- سڵاو'). Do not move hyphens to the end of lines.
+               - If a sentence or line STARTS with numbers or number expressions (e.g., '100 years' -> '100 ساڵ', '10 months' -> '10 مانگ', '100'), move that leading number/phrase to the ABSOLUTE END of the line (e.g. 'لەمەوبەر 100 ساڵ'). This ensures that on RTL video players, the number renders visually at the start of the sentence on screen.
+            5. SUBTITLE ECONOMY: Keep phrasing concise and natural, but NEVER delete or skip any sentence, clause, or speaker turn.
+            6. MULTI-LINE & DIALOGUE PRESERVATION (CRITICAL): Preserve all '<br>' tags and line counts exactly as positioned. If 'originalText' or 'translatedKurdish' has 2 lines separated by '<br>' (such as two dialogue lines like '- All right. You ready?<br>- Okay. Yeah.'), your 'translatedText' MUST also have 2 lines separated by '<br>' translating BOTH lines completely. NEVER omit, drop, or merge separate lines within a block.
+            7. ZERO ENGLISH TOLERANCE: Ensure total translation. If an original line was untranslatable in Pass 1, you MUST provide a professional, highly localized, or contextualized translation in Pass 2.
+            8. INTERRUPTED PHRASES & CONTINUITY: When a single sentence is split across consecutive subtitle IDs, analyze surrounding blocks to maintain smooth syntactical flow across block boundaries. However, NEVER delete a line or merge two speakers' lines inside a multi-line block.
+
+            ITEMS FOR SUBTITLE REFINEMENT AND RESTRUCTURING:
+            ${JSON.stringify(itemsForRefinement)}`;
+
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: [{ role: "user", parts: [{ text: refinePrompt }] }],
+            config: {
+              systemInstruction: "You are a native Kurdish Sorani subtitle editor. Review 'originalText' and 'translatedKurdish' then output the refined and polished Kurdish translation under 'translatedText'. Output MUST be JSON array of objects with 'id' and 'translatedText'.",
+              responseMimeType: "application/json",
+              responseSchema: BATCH_SCHEMA,
+            }
+          });
+
+          const result = extractJson(response.text || "[]");
+          if (Array.isArray(result) && result.length > 0) {
+            const resultMap = new Map<number, string>();
+            result.forEach((r: any) => {
+              if (r && r.id !== undefined && r.translatedText !== undefined) {
+                resultMap.set(Number(r.id), typeof r.translatedText === 'string' ? r.translatedText : String(r.translatedText));
+              }
+            });
+            if (resultMap.size >= Math.max(1, Math.floor(cleanedItems.length * 0.8))) {
+              return itemsForRefinement.map((matchedItem: any) => {
+                const matchedOriginal = matchedItem.originalText ? String(matchedItem.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined;
+                const matchedPass1 = matchedItem.translatedKurdish ? String(matchedItem.translatedKurdish).replace(/<br\s*\/?>/gi, '\n') : '';
+                const refinedStr = resultMap.get(Number(matchedItem.id)) ?? matchedPass1;
+                const rawRefined = refinedStr.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
+                const multiLineSafe = preserveMultiLineRefinement(rawRefined, matchedPass1, matchedOriginal);
+                return {
+                  id: Number(matchedItem.id),
+                  translatedText: cleanKurdishSubtitle(multiLineSafe, matchedOriginal)
+                };
+              });
+            }
+          }
+          throw new Error(`Pass 2 Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
+        });
+      } catch (refineError) {
+        console.log("[Refinement Pass Bypassed] Falling back to Pass 1 translated results.");
+        // Fallback to Pass 1 translation
+        refinedResults = pass1Results.map((item: any) => {
+          const matchedOriginal = cleanedItems.find((ci: any) => Number(ci.id) === Number(item.id))?.text;
+          return {
+            id: Number(item.id),
+            translatedText: cleanKurdishSubtitle(
+              item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n'),
+              matchedOriginal ? String(matchedOriginal).replace(/<br\s*\/?>/gi, '\n') : undefined
+            )
+          };
+        });
+      }
+
+      res.json({ results: [...emptyResults, ...refinedResults] });
+    } catch (error: any) {
+      console.error("Batch translation API error:", error);
+      res.status(500).json({ error: error.message || "Batch translation failed" });
+    }
+  });
+
+  // Refine batch (Pass 2 Refinement) on server
+  app.post("/api/gemini/refine-batch", async (req, res) => {
+    try {
+      const { items, apiKey } = req.body;
+      if (!Array.isArray(items)) {
+        return res.status(400).json({ error: "Missing or invalid items array" });
+      }
+
+      const emptyItems = items.filter((item: any) => String(item.originalText || '').trim() === '');
+      const activeItems = items.filter((item: any) => String(item.originalText || '').trim() !== '');
+
+      const emptyResults = emptyItems.map((item: any) => ({
+        id: Number(item.id),
+        translatedText: String(item.translatedKurdish || item.originalText || '')
+      }));
+
+      if (activeItems.length === 0) {
+        return res.json({ results: emptyResults });
+      }
+
+      const cleanedItems = activeItems.map((item: any) => ({
+        id: Number(item.id),
+        originalText: String(item.originalText).replace(/\n/g, '<br>'),
+        translatedKurdish: String(item.translatedKurdish || '').replace(/\n/g, '<br>')
+      }));
+
+      let refinedResults;
+      try {
+        refinedResults = await callGeminiWithModelFallback(apiKey, async (ai, modelName) => {
+          const refinePrompt = `You are a native Kurdish Sorani subtitle localization and refinement specialist.
+            Your task is to review and edit the translated Kurdish subtitles to make them highly natural, idiomatic, flowing, and professional.
+
+            STANDARDS FOR PERFECT REFINEMENT:
+            1. LINGUISTIC PRECISION (SOV): English is Subject-Verb-Object (SVO), while Kurdish Sorani is Subject-Object-Verb (SOV). You MUST completely restructure all sentences to place the verb appropriately at the end. DO NOT allow SVO remnants.
+            2. NATIVE IDIOMATIC FLOW: Discard all literal, word-for-word, or "translated-sounding" phrasing. Replace with authentic, natural conversational Kurdish used in high-quality media. If an English idiom lacks a direct counterpart, capture the underlying meaning using appropriate Kurdish imagery/idioms.
+            3. REGISTER ADAPTATION: Adapt the tone based on the context implied by the source text (e.g., formal dialogue should be rendered formally; casual slang should be rendered with modern conversational equivalents).
+            4. RTL, PUNCTUATION & NUMBER INTEGRITY: This is a strict RTL language. FOR VIDEO PLAYER COMPATIBILITY:
+               - If a sentence or line ends with punctuation marks like ',', '،', '.', '...', '!', '؛', move that punctuation mark to the ABSOLUTE START of the Kurdish line (e.g. '.سڵاو'). Question marks ('?' or '؟') MUST remain at the end (e.g. 'چۆنیت؟').
+               - Preserve standard leading dialogue dashes naturally (e.g., '- Hello' -> '- سڵاو'). Do not move hyphens to the end of lines.
+               - If a sentence or line STARTS with numbers or number expressions (e.g., '100 years' -> '100 ساڵ', '10 months' -> '10 مانگ', '100'), move that leading number/phrase to the ABSOLUTE END of the line (e.g. 'لەمەوبەر 100 ساڵ'). This ensures that on RTL video players, the number renders visually at the start of the sentence on screen.
+            5. SUBTITLE ECONOMY: Keep phrasing concise and natural, but NEVER delete or skip any sentence, clause, or speaker turn.
+            6. MULTI-LINE & DIALOGUE PRESERVATION (CRITICAL): Preserve all '<br>' tags and line counts exactly as positioned. If 'originalText' or 'translatedKurdish' has 2 lines separated by '<br>' (such as two dialogue lines like '- All right. You ready?<br>- Okay. Yeah.'), your 'translatedText' MUST also have 2 lines separated by '<br>' translating BOTH lines completely. NEVER omit, drop, or merge separate lines within a block.
+            7. ZERO ENGLISH TOLERANCE: Ensure total translation. If an original line was untranslatable in Pass 1, you MUST provide a professional, highly localized, or contextualized translation in Pass 2.
+            8. INTERRUPTED PHRASES & CONTINUITY: When a single sentence is split across consecutive subtitle IDs, analyze surrounding blocks to maintain smooth syntactical flow across block boundaries. However, NEVER delete a line or merge two speakers' lines inside a multi-line block.
+
+            ITEMS FOR SUBTITLE REFINEMENT AND RESTRUCTURING:
+            ${JSON.stringify(cleanedItems)}`;
+
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: [{ role: "user", parts: [{ text: refinePrompt }] }],
+            config: {
+              systemInstruction: "You are a native Kurdish Sorani subtitle editor. Review 'originalText' and 'translatedKurdish' then output the refined and polished Kurdish translation under 'translatedText'. Output MUST be JSON array of objects with 'id' and 'translatedText'.",
+              responseMimeType: "application/json",
+              responseSchema: BATCH_SCHEMA,
+            }
+          });
+
+          const result = extractJson(response.text || "[]");
+          if (Array.isArray(result) && result.length > 0) {
+            const resultMap = new Map<number, string>();
+            result.forEach((r: any) => {
+              if (r && r.id !== undefined && r.translatedText !== undefined) {
+                resultMap.set(Number(r.id), typeof r.translatedText === 'string' ? r.translatedText : String(r.translatedText));
+              }
+            });
+            if (resultMap.size >= Math.max(1, Math.floor(cleanedItems.length * 0.8))) {
+              return cleanedItems.map((matchedItem: any) => {
+                const matchedOriginal = matchedItem.originalText ? String(matchedItem.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined;
+                const matchedPass1 = matchedItem.translatedKurdish ? String(matchedItem.translatedKurdish).replace(/<br\s*\/?>/gi, '\n') : '';
+                const refinedStr = resultMap.get(Number(matchedItem.id)) ?? matchedPass1;
+                const rawRefined = refinedStr.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
+                const multiLineSafe = preserveMultiLineRefinement(rawRefined, matchedPass1, matchedOriginal);
+                return {
+                  id: Number(matchedItem.id),
+                  translatedText: cleanKurdishSubtitle(multiLineSafe, matchedOriginal)
+                };
+              });
+            }
+          }
+          throw new Error(`Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
+        });
+      } catch (refineError) {
+        console.log("[Refinement Pass Bypassed] Falling back to Pass 1 translated results.");
+        refinedResults = cleanedItems.map((item: any) => ({
+          id: Number(item.id),
+          translatedText: cleanKurdishSubtitle(
+            item.translatedKurdish.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n'),
+            item.originalText ? String(item.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined
+          )
+        }));
+      }
+
+      res.json({ results: [...emptyResults, ...refinedResults] });
+    } catch (error: any) {
+      console.error("Batch refinement API error:", error);
+      res.status(500).json({ error: error.message || "Batch refinement failed" });
+    }
+  });
+
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static("dist"));
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();
