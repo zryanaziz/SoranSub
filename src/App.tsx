@@ -53,7 +53,6 @@ import {
   refineBatch,
   refineSingleBlock,
   jointTranslateRefineBatch,
-  setManualApiKey,
   getCurrentModel
 } from './services/gemini';
 
@@ -70,9 +69,6 @@ export default function App() {
   const [showFinishedMessage, setShowFinishedMessage] = useState(false);
   const [fileName, setFileName] = useState<string>('');
   const [isMobileView, setIsMobileView] = useState(false);
-  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
-  const [showKeyInput, setShowKeyInput] = useState(false);
-  const [manualKey, setManualKey] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -133,7 +129,7 @@ export default function App() {
           setStatus({ type: 'success', message: `Synced ${syncName} to workspace.` });
         }
       } catch (error) {
-        backendAvailableRef.current = false;
+        // Ignore transient network errors during dev server restarts
       } finally {
         setIsSaving(false);
       }
@@ -319,83 +315,7 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    const checkApiKey = async () => {
-      // 1. Check for manual key in localStorage
-      const storedKey = localStorage.getItem('gemini_api_key');
-      if (storedKey) {
-        setHasApiKey(true);
-        return;
-      }
 
-      // 2. Check for server-side environment variables via has-key endpoint
-      if (backendAvailableRef.current) {
-        try {
-          const response = await fetch('/api/gemini/has-key');
-          const contentType = response.headers.get('content-type') || '';
-          if (response.status === 404 || response.status === 405 || contentType.includes('text/html')) {
-            backendAvailableRef.current = false;
-          } else if (response.ok) {
-            const data = await response.json();
-            if (data.hasKey) {
-              setHasApiKey(true);
-              return;
-            }
-          }
-        } catch (e) {
-          // Backend proxy not active or reachable, continue to next check
-          backendAvailableRef.current = false;
-        }
-      }
-
-      // 3. Check for environment variables
-      const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && (process.env?.GEMINI_API_KEY || process.env?.API_KEY));
-      if (envKey) {
-        setHasApiKey(true);
-        return;
-      }
-
-      // 4. Check AI Studio platform key
-      if (window.aistudio?.hasSelectedApiKey) {
-        try {
-          const hasKey = await window.aistudio.hasSelectedApiKey();
-          setHasApiKey(hasKey);
-        } catch (e) {
-          console.error("Error checking platform API key:", e);
-          setHasApiKey(false);
-        }
-      } else {
-        setHasApiKey(false);
-      }
-    };
-    checkApiKey();
-    
-    // Periodically check if key was selected via platform
-    const interval = setInterval(checkApiKey, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleClearKey = () => {
-    setManualApiKey('');
-    setHasApiKey(false);
-    setStatus({ type: 'info', message: 'API Key cleared.' });
-  };
-
-  const handleSaveManualKey = () => {
-    if (manualKey.trim()) {
-      setManualApiKey(manualKey.trim());
-      setHasApiKey(true);
-      setShowKeyInput(false);
-      setStatus({ type: 'success', message: 'API Key saved successfully!' });
-    }
-  };
-
-  const handleOpenKeySelector = async () => {
-    if (window.aistudio?.openSelectKey) {
-      await window.aistudio.openSelectKey();
-      setHasApiKey(true);
-    }
-  };
 
   useEffect(() => {
     const checkMobile = () => {
@@ -568,12 +488,6 @@ export default function App() {
 
   const handleProcessSubtitles = async (indices: number[], shouldRefine: boolean = true) => {
     if (subtitles.length === 0 || indices.length === 0) return;
-    
-    if (!hasApiKey) {
-      setShowKeyInput(true);
-      setStatus({ type: 'error', message: 'Please set an API key first.' });
-      return;
-    }
 
     setIsTranslating(true);
     setProgress(5);
@@ -760,7 +674,7 @@ export default function App() {
               }
 
             } catch (err: any) {
-              console.error("Pass 1 batch error:", err);
+              console.log("Pass 1 batch error:", err);
               throw err;
             }
           })());
@@ -917,7 +831,7 @@ export default function App() {
         setProgress(0);
       }, 500);
     } catch (err: any) {
-      console.error("Process failed:", err);
+      console.log("Process failed:", err);
       setStatus({ type: 'error', message: `Process failed: ${err.message || 'Unknown error'}. Please try again.` });
       setIsTranslating(false);
       setProgress(0);
@@ -1281,31 +1195,6 @@ export default function App() {
           </div>
 
           <div className="flex flex-col items-end md:hidden">
-            <div className="flex flex-col items-end gap-1 mb-2">
-              {!hasApiKey ? (
-                <>
-                  <button 
-                    onClick={handleOpenKeySelector}
-                    className="px-2 py-1 bg-red-500 text-white text-[8px] uppercase font-mono rounded-sm animate-pulse"
-                  >
-                    Select Key
-                  </button>
-                  <button 
-                    onClick={() => setShowKeyInput(true)}
-                    className="px-2 py-1 border border-red-500 text-red-500 text-[8px] uppercase font-mono rounded-sm"
-                  >
-                    Enter Key
-                  </button>
-                </>
-              ) : (
-                <button 
-                  onClick={() => setShowKeyInput(true)}
-                  className="px-2 py-1 border border-[#141414] text-[#141414] text-[8px] uppercase font-mono rounded-sm opacity-50 hover:opacity-100"
-                >
-                  Change Key
-                </button>
-              )}
-            </div>
             {subtitles.length > 0 && (
               <div className="flex items-center gap-1 mt-1">
                 <span className="text-[10px] font-mono uppercase opacity-50">{subtitles.length} Blocks</span>
@@ -1320,36 +1209,7 @@ export default function App() {
           </div>
         </div>
 
-
-
         <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 md:gap-3 w-full md:w-auto">
-          <div className="flex gap-2">
-            {!hasApiKey ? (
-              <>
-                <button 
-                  onClick={handleOpenKeySelector}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-red-500 text-white text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-600 transition-colors animate-pulse"
-                >
-                  <AlertCircle size={12} />
-                  Select Key
-                </button>
-                <button 
-                  onClick={() => setShowKeyInput(true)}
-                  className="flex items-center gap-2 px-3 py-1.5 border border-red-500 text-red-500 text-[10px] md:text-xs uppercase tracking-widest font-mono rounded-sm hover:bg-red-50 transition-colors"
-                >
-                  Enter Key
-                </button>
-              </>
-            ) : (
-              <button 
-                onClick={() => setShowKeyInput(true)}
-                className="flex items-center justify-center p-1.5 md:p-2 border border-[#141414] text-[#141414] rounded-sm hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-50 hover:opacity-100"
-                title="API Key Settings"
-              >
-                <Sparkles size={14} />
-              </button>
-            )}
-          </div>
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -1711,45 +1571,7 @@ export default function App() {
         </div>
       </footer>
 
-      {/* API Key Input Modal */}
-      <AnimatePresence>
-        {showKeyInput && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#141414] bg-opacity-80 p-4 backdrop-blur-sm">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-[#E4E3E0] border border-[#141414] p-6 max-w-md w-full shadow-2xl"
-            >
-              <h3 className="text-lg font-serif italic mb-4">Enter Gemini API Key</h3>
-              <p className="text-xs opacity-70 mb-4 font-mono leading-relaxed">
-                Enter your Gemini API key manually. It will be stored locally in your browser.
-              </p>
-              <input 
-                type="password"
-                value={manualKey}
-                onChange={(e) => setManualKey(e.target.value)}
-                placeholder="AIzaSy..."
-                className="w-full bg-transparent border border-[#141414] p-2 text-xs font-mono mb-6 focus:outline-none focus:ring-1 focus:ring-[#141414]"
-              />
-              <div className="flex justify-end gap-3">
-                <button 
-                  onClick={() => setShowKeyInput(false)}
-                  className="px-4 py-2 text-[10px] uppercase tracking-widest font-mono opacity-50 hover:opacity-100"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleSaveManualKey}
-                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest font-mono hover:bg-opacity-90"
-                >
-                  Save Key
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+
 
       {/* Range Selection Modal */}
       <AnimatePresence>

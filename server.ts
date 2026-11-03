@@ -21,13 +21,8 @@ const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator a
 const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
 const MODELS = [
   "gemini-3.8-flash",
-  "gemini-3.7-flash",
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
-  "gemini-2.5-flash",
-  "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
-  "gemini-2.5-flash-lite"
+  "gemini-flash-latest"
 ];
 let currentModelIndex = 0;
 
@@ -37,7 +32,6 @@ function getCurrentModel() {
 
 function rotateModel() {
   currentModelIndex = (currentModelIndex + 1) % MODELS.length;
-  console.log(`Rotating to next model on server: ${MODELS[currentModelIndex]}`);
   return MODELS[currentModelIndex];
 }
 
@@ -89,75 +83,49 @@ function getAI(clientApiKey?: string) {
   });
 }
 
-const modelCooldownUntil = new Map<string, number>();
-
-function recordModelCooldown(modelName: string, errorMsg: string) {
-  const isQuota = errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED') || errorMsg.includes('rate limit');
-  const isOverloaded = errorMsg.includes('503') || errorMsg.includes('unavailable') || errorMsg.includes('overloaded');
-  const isNotFound = errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('NOT_FOUND') || errorMsg.includes('is not supported');
-
-  if (isNotFound) {
-    modelCooldownUntil.set(modelName, Date.now() + 3600_000);
-  } else if (isQuota) {
-    const retryMatch = errorMsg.match(/retry in ([0-9.]+)s/i) || errorMsg.match(/"retryDelay"\s*:\s*"([0-9.]+)s"/i);
-    const retrySeconds = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 55;
-    const cooldownMs = Math.min(Math.max(retrySeconds * 1000, 15000), 65000);
-    modelCooldownUntil.set(modelName, Date.now() + cooldownMs);
-  } else if (isOverloaded) {
-    modelCooldownUntil.set(modelName, Date.now() + 12000);
-  }
-}
-
-async function withRetry<T>(fn: () => Promise<T>, retries = 1, delay = 1000): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 1000): Promise<T> {
   try {
     return await fn();
   } catch (error: any) {
     const errorMsg = error.message || String(error);
-    const isQuotaOrOverload =
-      errorMsg.includes('429') ||
-      errorMsg.includes('quota') ||
-      errorMsg.includes('RESOURCE_EXHAUSTED') ||
+    const isTransient = 
+      errorMsg.includes('429') || 
+      errorMsg.includes('quota') || 
       errorMsg.includes('rate limit') ||
       errorMsg.includes('503') ||
       errorMsg.includes('unavailable') ||
       errorMsg.includes('overloaded') ||
-      errorMsg.includes('404') ||
-      errorMsg.includes('not found') ||
-      errorMsg.includes('NOT_FOUND');
-
-    // Immediately hand off to next model on quota, overload, or 404 instead of waiting on the same model
-    if (isQuotaOrOverload) {
-      throw error;
-    }
-
-    const isRetryable =
       errorMsg.includes('500') ||
-      errorMsg.includes('internal error') ||
-      errorMsg.includes('length mismatch');
+      errorMsg.includes('internal error');
 
-    if (retries > 0 && isRetryable) {
+    if (retries > 0 && isTransient) {
+      if (errorMsg.includes('429') || errorMsg.includes('quota')) {
+        rotateModel();
+      }
       await new Promise(resolve => setTimeout(resolve, delay));
       return withRetry(fn, retries - 1, delay * 1.5);
     }
-
-    if (errorMsg.includes('API key not valid') || errorMsg.includes('API_KEY_INVALID')) {
+    
+    if (errorMsg.includes('quota') || errorMsg.includes('429')) {
+      throw new Error("API Quota exceeded. Please wait a moment or use a different key.");
+    }
+    if (errorMsg.includes('503') || errorMsg.includes('unavailable') || errorMsg.includes('overloaded')) {
+      throw new Error("Gemini service is temporarily busy. Rotating model...");
+    }
+    if (errorMsg.includes('API key not valid')) {
       throw new Error("Invalid API Key. Please check your configuration.");
     }
-
+    
     throw error;
   }
 }
 
 /**
- * Intelligent fall-back that tries flagship models from best to good,
- * automatically respecting rate-limit cooldown windows and cascading to flash-lite models:
- * 1. gemini-3.8-flash (Default)
- * 2. gemini-3.7-flash
- * 3. gemini-3.6-flash
- * 4. gemini-3.5-flash
- * 5. gemini-3.5-flash-lite
- * 6. gemini-3.1-flash-lite
- * 7. gemini-2.5-flash-lite
+ * Intelligent fallback that starts from the last known working model index
+ * and cascades across active models:
+ * 1. gemini-3.8-flash
+ * 2. gemini-3.1-flash-lite
+ * 3. gemini-flash-latest
  */
 async function callGeminiWithModelFallback<T>(
   apiKey: string,
@@ -165,32 +133,25 @@ async function callGeminiWithModelFallback<T>(
 ): Promise<T> {
   const ai = getAI(apiKey);
   let lastError: any = null;
+  const startIndex = currentModelIndex;
 
   for (let pass = 1; pass <= 2; pass++) {
-    for (let i = 0; i < MODELS.length; i++) {
-      const modelName = MODELS[i];
-      const cooldownUntil = modelCooldownUntil.get(modelName) || 0;
-
-      // On Pass 1, skip models that are actively in a rate-limit or overload cooldown window
-      if (pass === 1 && Date.now() < cooldownUntil) {
-        continue;
-      }
-
-      currentModelIndex = i;
+    for (let offset = 0; offset < MODELS.length; offset++) {
+      const idx = (startIndex + offset) % MODELS.length;
+      const modelName = MODELS[idx];
 
       try {
         if (pass > 1) {
-          const delayTime = 1200 * (i + 1);
+          const delayTime = 1000 * (offset + 1);
           await new Promise(resolve => setTimeout(resolve, delayTime));
         }
 
-        const res = await withRetry(() => fn(ai, modelName), 1, 1000);
-        modelCooldownUntil.delete(modelName);
+        const res = await withRetry(() => fn(ai, modelName), 1, 800);
+        currentModelIndex = idx;
         return res;
       } catch (err: any) {
         lastError = err;
         const errorMsg = err.message || String(err);
-        recordModelCooldown(modelName, errorMsg);
 
         // If the API key is completely invalid, do not continue trying secondary models.
         if (errorMsg.includes('API key not valid') || errorMsg.includes('API_KEY_INVALID')) {
@@ -320,19 +281,11 @@ async function startServer() {
         });
 
         const result = extractJson(response.text || "[]");
-        if (Array.isArray(result) && result.length > 0) {
-          const resultMap = new Map<number, string>();
-          result.forEach((r: any) => {
-            if (r && r.id !== undefined && r.translatedText !== undefined) {
-              resultMap.set(Number(r.id), typeof r.translatedText === 'string' ? r.translatedText : String(r.translatedText));
-            }
-          });
-          if (resultMap.size >= Math.max(1, Math.floor(cleanedItems.length * 0.8))) {
-            return cleanedItems.map((ci: any) => ({
-              id: Number(ci.id),
-              translatedText: resultMap.get(Number(ci.id)) ?? ci.text
-            }));
-          }
+        if (Array.isArray(result) && result.length === cleanedItems.length) {
+          return result.map((item: any) => ({
+            id: Number(item.id),
+            translatedText: typeof item.translatedText === 'string' ? item.translatedText : String(item.translatedText)
+          }));
         }
         throw new Error(`Pass 1 Translation batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
       });
@@ -390,31 +343,25 @@ async function startServer() {
           });
 
           const result = extractJson(response.text || "[]");
-          if (Array.isArray(result) && result.length > 0) {
-            const resultMap = new Map<number, string>();
-            result.forEach((r: any) => {
-              if (r && r.id !== undefined && r.translatedText !== undefined) {
-                resultMap.set(Number(r.id), typeof r.translatedText === 'string' ? r.translatedText : String(r.translatedText));
-              }
+          if (Array.isArray(result) && result.length === cleanedItems.length) {
+            return result.map((item: any) => {
+              const matchedItem = itemsForRefinement.find((ci: any) => Number(ci.id) === Number(item.id));
+              const matchedOriginal = matchedItem?.originalText ? String(matchedItem.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined;
+              const matchedPass1 = matchedItem?.translatedKurdish ? String(matchedItem.translatedKurdish).replace(/<br\s*\/?>/gi, '\n') : '';
+              const rawRefined = typeof item.translatedText === 'string'
+                ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
+                : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
+              const multiLineSafe = preserveMultiLineRefinement(rawRefined, matchedPass1, matchedOriginal);
+              return {
+                id: Number(item.id),
+                translatedText: cleanKurdishSubtitle(multiLineSafe, matchedOriginal)
+              };
             });
-            if (resultMap.size >= Math.max(1, Math.floor(cleanedItems.length * 0.8))) {
-              return itemsForRefinement.map((matchedItem: any) => {
-                const matchedOriginal = matchedItem.originalText ? String(matchedItem.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined;
-                const matchedPass1 = matchedItem.translatedKurdish ? String(matchedItem.translatedKurdish).replace(/<br\s*\/?>/gi, '\n') : '';
-                const refinedStr = resultMap.get(Number(matchedItem.id)) ?? matchedPass1;
-                const rawRefined = refinedStr.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
-                const multiLineSafe = preserveMultiLineRefinement(rawRefined, matchedPass1, matchedOriginal);
-                return {
-                  id: Number(matchedItem.id),
-                  translatedText: cleanKurdishSubtitle(multiLineSafe, matchedOriginal)
-                };
-              });
-            }
           }
           throw new Error(`Pass 2 Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
         });
       } catch (refineError) {
-        console.log("[Refinement Pass Bypassed] Falling back to Pass 1 translated results.");
+        console.warn("[Refinement Pass Bypassed] Server-side refinement failed, falling back to raw translated results:", refineError);
         // Fallback to Pass 1 translation
         refinedResults = pass1Results.map((item: any) => {
           const matchedOriginal = cleanedItems.find((ci: any) => Number(ci.id) === Number(item.id))?.text;
@@ -494,31 +441,25 @@ async function startServer() {
           });
 
           const result = extractJson(response.text || "[]");
-          if (Array.isArray(result) && result.length > 0) {
-            const resultMap = new Map<number, string>();
-            result.forEach((r: any) => {
-              if (r && r.id !== undefined && r.translatedText !== undefined) {
-                resultMap.set(Number(r.id), typeof r.translatedText === 'string' ? r.translatedText : String(r.translatedText));
-              }
+          if (Array.isArray(result) && result.length === cleanedItems.length) {
+            return result.map((item: any) => {
+              const matchedItem = cleanedItems.find((ci: any) => Number(ci.id) === Number(item.id));
+              const matchedOriginal = matchedItem?.originalText ? String(matchedItem.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined;
+              const matchedPass1 = matchedItem?.translatedKurdish ? String(matchedItem.translatedKurdish).replace(/<br\s*\/?>/gi, '\n') : '';
+              const rawRefined = typeof item.translatedText === 'string'
+                ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
+                : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
+              const multiLineSafe = preserveMultiLineRefinement(rawRefined, matchedPass1, matchedOriginal);
+              return {
+                id: Number(item.id),
+                translatedText: cleanKurdishSubtitle(multiLineSafe, matchedOriginal)
+              };
             });
-            if (resultMap.size >= Math.max(1, Math.floor(cleanedItems.length * 0.8))) {
-              return cleanedItems.map((matchedItem: any) => {
-                const matchedOriginal = matchedItem.originalText ? String(matchedItem.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined;
-                const matchedPass1 = matchedItem.translatedKurdish ? String(matchedItem.translatedKurdish).replace(/<br\s*\/?>/gi, '\n') : '';
-                const refinedStr = resultMap.get(Number(matchedItem.id)) ?? matchedPass1;
-                const rawRefined = refinedStr.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
-                const multiLineSafe = preserveMultiLineRefinement(rawRefined, matchedPass1, matchedOriginal);
-                return {
-                  id: Number(matchedItem.id),
-                  translatedText: cleanKurdishSubtitle(multiLineSafe, matchedOriginal)
-                };
-              });
-            }
           }
           throw new Error(`Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
         });
       } catch (refineError) {
-        console.log("[Refinement Pass Bypassed] Falling back to Pass 1 translated results.");
+        console.warn("[Refinement Pass Bypassed] Server-side refinement failed, falling back to raw translated results:", refineError);
         refinedResults = cleanedItems.map((item: any) => ({
           id: Number(item.id),
           translatedText: cleanKurdishSubtitle(

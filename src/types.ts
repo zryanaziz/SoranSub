@@ -15,11 +15,3 @@ export interface SubtitleItem {
 
 export type SubtitleFormat = 'srt' | 'vtt';
 
-declare global {
-  interface Window {
-    aistudio: {
-      hasSelectedApiKey: () => Promise<boolean>;
-      openSelectKey: () => Promise<void>;
-    };
-  }
-}

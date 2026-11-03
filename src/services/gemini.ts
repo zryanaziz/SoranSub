@@ -7,13 +7,8 @@ const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INST
 
 const MODELS = [
   "gemini-3.8-flash",
-  "gemini-3.7-flash",
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
-  "gemini-2.5-flash",
-  "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
-  "gemini-2.5-flash-lite"
+  "gemini-flash-latest"
 ];
 let currentModelIndex = 0;
 
@@ -22,19 +17,6 @@ export function getCurrentModel() {
 }
 
 let manualApiKey: string | null = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
-let backendUnavailable: boolean = typeof window !== 'undefined' && window.location.hostname.endsWith('github.io');
-
-export function getClientApiKey(): string | null {
-  if (manualApiKey) return manualApiKey;
-  if (typeof window !== 'undefined') {
-    const stored = localStorage.getItem('gemini_api_key');
-    if (stored) return stored;
-  }
-  const envKey =
-    (import.meta as any).env?.VITE_GEMINI_API_KEY ||
-    (typeof process !== 'undefined' && (process.env?.GEMINI_API_KEY || process.env?.API_KEY));
-  return envKey || null;
-}
 
 export function setManualApiKey(key: string) {
   manualApiKey = key;
@@ -81,61 +63,32 @@ function extractJson(text: string): any {
 }
 
 /**
- * Intelligent client-side fallback that prioritizes flagship models from best to good,
- * then falls back to flash-lite models when rate/quota limits are reached:
- * 1. gemini-3.8-flash (Default)
- * 2. gemini-3.7-flash
- * 3. gemini-3.6-flash
- * 4. gemini-3.5-flash
- * 5. gemini-3.5-flash-lite
- * 6. gemini-3.1-flash-lite
- * 7. gemini-2.5-flash-lite
+ * Intelligent client-side fallback that starts from the last working model
+ * and cascades across active models:
+ * 1. gemini-3.8-flash
+ * 2. gemini-3.1-flash-lite
+ * 3. gemini-flash-latest
  */
-const clientModelCooldownUntil = new Map<string, number>();
-
-function recordClientModelCooldown(modelName: string, errorMsg: string) {
-  const isQuota = errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED') || errorMsg.includes('rate limit');
-  const isOverloaded = errorMsg.includes('503') || errorMsg.includes('unavailable') || errorMsg.includes('overloaded');
-  const isNotFound = errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('NOT_FOUND') || errorMsg.includes('is not supported');
-
-  if (isNotFound) {
-    // External API environments (e.g. GitHub Pages) that don't expose internal aliases skip them for 1 hour
-    clientModelCooldownUntil.set(modelName, Date.now() + 3600_000);
-  } else if (isQuota) {
-    const retryMatch = errorMsg.match(/retry in ([0-9.]+)s/i) || errorMsg.match(/"retryDelay"\s*:\s*"([0-9.]+)s"/i);
-    const retrySeconds = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 55;
-    const cooldownMs = Math.min(Math.max(retrySeconds * 1000, 15000), 65000);
-    clientModelCooldownUntil.set(modelName, Date.now() + cooldownMs);
-  } else if (isOverloaded) {
-    clientModelCooldownUntil.set(modelName, Date.now() + 12000);
-  }
-}
-
 async function callClientGeminiWithModelFallback<T>(
   apiKey: string,
   fn: (ai: any, modelName: string) => Promise<T>
 ): Promise<T> {
   const ai = new GoogleGenAI({ apiKey });
   let lastError: any = null;
+  const startIndex = currentModelIndex;
 
   for (let pass = 1; pass <= 2; pass++) {
-    for (let i = 0; i < MODELS.length; i++) {
-      const modelName = MODELS[i];
-      const cooldownUntil = clientModelCooldownUntil.get(modelName) || 0;
-
-      if (pass === 1 && Date.now() < cooldownUntil) {
-        continue;
-      }
-
-      currentModelIndex = i;
+    for (let offset = 0; offset < MODELS.length; offset++) {
+      const idx = (startIndex + offset) % MODELS.length;
+      const modelName = MODELS[idx];
 
       try {
         if (pass > 1) {
-          const delayTime = 1200 * (i + 1);
+          const delayTime = 1000 * (offset + 1);
           await new Promise(resolve => setTimeout(resolve, delayTime));
         }
         const res = await fn(ai, modelName);
-        clientModelCooldownUntil.delete(modelName);
+        currentModelIndex = idx;
         return res;
       } catch (err: any) {
         lastError = err;
@@ -143,7 +96,6 @@ async function callClientGeminiWithModelFallback<T>(
         if (errorMsg.includes('API key not valid') || errorMsg.includes('API_KEY_INVALID')) {
           throw new Error("Invalid API Key. Please enter a valid Gemini API Key in the settings.");
         }
-        recordClientModelCooldown(modelName, errorMsg);
       }
     }
   }
@@ -207,19 +159,11 @@ async function clientSideTranslateRefineBatch(
     });
 
     const result = extractJson(response.text || "[]");
-    if (Array.isArray(result) && result.length > 0) {
-      const resultMap = new Map<number, string>();
-      result.forEach((r: any) => {
-        if (r && r.id !== undefined && r.translatedText !== undefined) {
-          resultMap.set(Number(r.id), typeof r.translatedText === 'string' ? r.translatedText : String(r.translatedText));
-        }
-      });
-      if (resultMap.size >= Math.max(1, Math.floor(cleanedItems.length * 0.8))) {
-        return cleanedItems.map((ci: any) => ({
-          id: Number(ci.id),
-          translatedText: resultMap.get(Number(ci.id)) ?? ci.text
-        }));
-      }
+    if (Array.isArray(result) && result.length === cleanedItems.length) {
+      return result.map((item: any) => ({
+        id: Number(item.id),
+        translatedText: typeof item.translatedText === 'string' ? item.translatedText : String(item.translatedText)
+      }));
     }
     throw new Error(`Pass 1 Translation batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
   });
@@ -296,31 +240,25 @@ export async function clientSideRefineBatch(
       });
 
       const result = extractJson(response.text || "[]");
-      if (Array.isArray(result) && result.length > 0) {
-        const resultMap = new Map<number, string>();
-        result.forEach((r: any) => {
-          if (r && r.id !== undefined && r.translatedText !== undefined) {
-            resultMap.set(Number(r.id), typeof r.translatedText === 'string' ? r.translatedText : String(r.translatedText));
-          }
+      if (Array.isArray(result) && result.length === cleanedItems.length) {
+        return result.map((item: any) => {
+          const matchedItem = cleanedItems.find((ci: any) => Number(ci.id) === Number(item.id));
+          const matchedOriginal = matchedItem?.originalText ? String(matchedItem.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined;
+          const matchedPass1 = matchedItem?.translatedKurdish ? String(matchedItem.translatedKurdish).replace(/<br\s*\/?>/gi, '\n') : '';
+          const rawRefined = typeof item.translatedText === 'string'
+            ? item.translatedText.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n')
+            : String(item.translatedText).replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
+          const multiLineSafe = preserveMultiLineRefinement(rawRefined, matchedPass1, matchedOriginal);
+          return {
+            id: Number(item.id),
+            translatedText: cleanKurdishSubtitle(multiLineSafe, matchedOriginal)
+          };
         });
-        if (resultMap.size >= Math.max(1, Math.floor(cleanedItems.length * 0.8))) {
-          return cleanedItems.map((matchedItem: any) => {
-            const matchedOriginal = matchedItem.originalText ? String(matchedItem.originalText).replace(/<br\s*\/?>/gi, '\n') : undefined;
-            const matchedPass1 = matchedItem.translatedKurdish ? String(matchedItem.translatedKurdish).replace(/<br\s*\/?>/gi, '\n') : '';
-            const refinedStr = resultMap.get(Number(matchedItem.id)) ?? matchedPass1;
-            const rawRefined = refinedStr.replace(/<br\s*\/?>|\\N|\\n|\/N|\/n/gi, '\n');
-            const multiLineSafe = preserveMultiLineRefinement(rawRefined, matchedPass1, matchedOriginal);
-            return {
-              id: Number(matchedItem.id),
-              translatedText: cleanKurdishSubtitle(multiLineSafe, matchedOriginal)
-            };
-          });
-        }
       }
       throw new Error(`Pass 2 Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
     });
   } catch (refineError) {
-    console.log("[Refinement Pass Bypassed] Falling back to Pass 1 translated results.");
+    console.warn("[Refinement Pass Bypassed] Client-side refinement failed, falling back to raw translated results:", refineError);
     return items.map((item: any) => ({
       id: Number(item.id),
       translatedText: cleanKurdishSubtitle(
@@ -346,15 +284,7 @@ export async function refineBatch(
     return emptyResults;
   }
 
-  const apiKey = getClientApiKey();
-
-  if (backendUnavailable) {
-    if (!apiKey) {
-      throw new Error("Please set your Gemini API Key in the settings (bottom-left) to use SoranSub on GitHub Pages.");
-    }
-    const activeResults = await clientSideRefineBatch(activeItems, apiKey);
-    return [...emptyResults, ...activeResults];
-  }
+  const apiKey = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
 
   try {
     const response = await fetch('/api/gemini/refine-batch', {
@@ -367,10 +297,10 @@ export async function refineBatch(
 
     const contentType = response.headers.get('content-type') || '';
 
-    if (response.status === 404 || response.status === 405 || contentType.includes('text/html')) {
-      backendUnavailable = true;
+    if (response.status === 404 || contentType.includes('text/html')) {
+      console.warn("[SPA/Redirect Fallback] Server refine endpoint returned 404 or HTML. Running direct browser batch refinement.");
       if (!apiKey) {
-        throw new Error("No backend server found and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
+        throw new Error("No backend server found (or server returned HTML) and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
       const activeResults = await clientSideRefineBatch(activeItems, apiKey);
       return [...emptyResults, ...activeResults];
@@ -386,6 +316,7 @@ export async function refineBatch(
       const data = JSON.parse(responseText);
       return [...emptyResults, ...data.results];
     } catch {
+      console.warn("[Parse Fallback] Server refine response was not valid JSON. Running direct browser batch refinement.");
       if (!apiKey) {
         throw new Error("Server returned non-JSON response and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
@@ -393,6 +324,7 @@ export async function refineBatch(
       return [...emptyResults, ...activeResults];
     }
   } catch (error: any) {
+    console.warn("[Refine Exception Handled] Falling back to direct browser batch refinement:", error);
     if (apiKey) {
       try {
         const activeResults = await clientSideRefineBatch(activeItems, apiKey);
@@ -420,15 +352,7 @@ export async function translateBatch(
     return emptyResults;
   }
 
-  const apiKey = getClientApiKey();
-
-  if (backendUnavailable) {
-    if (!apiKey) {
-      throw new Error("Please set your Gemini API Key in the settings (bottom-left) to use SoranSub on GitHub Pages.");
-    }
-    const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, false);
-    return [...emptyResults, ...activeResults];
-  }
+  const apiKey = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
 
   try {
     const response = await fetch('/api/gemini/translate-refine-batch', {
@@ -441,10 +365,10 @@ export async function translateBatch(
 
     const contentType = response.headers.get('content-type') || '';
 
-    if (response.status === 404 || response.status === 405 || contentType.includes('text/html')) {
-      backendUnavailable = true;
+    if (response.status === 404 || contentType.includes('text/html')) {
+      console.warn("[SPA/Redirect Fallback] Server batch endpoint returned 404 or HTML. Running direct browser batch localization.");
       if (!apiKey) {
-        throw new Error("No backend server found and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
+        throw new Error("No backend server found (or server returned HTML) and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
       const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, false);
       return [...emptyResults, ...activeResults];
@@ -460,6 +384,7 @@ export async function translateBatch(
       const data = JSON.parse(responseText);
       return [...emptyResults, ...data.results];
     } catch {
+      console.warn("[Parse Fallback] Server batch response was not valid JSON. Running direct browser batch localization.");
       if (!apiKey) {
         throw new Error("Server returned non-JSON response and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
@@ -467,6 +392,7 @@ export async function translateBatch(
       return [...emptyResults, ...activeResults];
     }
   } catch (error: any) {
+    console.warn("[Batch Exception Handled] Falling back to direct browser batch localization:", error);
     if (apiKey) {
       try {
         const activeResults = await clientSideTranslateRefineBatch(activeItems, apiKey, false);
@@ -497,14 +423,7 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
   if (text.trim() === '') {
     return text;
   }
-  const apiKey = getClientApiKey();
-
-  if (backendUnavailable) {
-    if (!apiKey) {
-      throw new Error("Please set your Gemini API Key in the settings (bottom-left) to use SoranSub on GitHub Pages.");
-    }
-    return await clientSideTranslate(text, apiKey);
-  }
+  const apiKey = typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
   
   try {
     const response = await fetch('/api/gemini/translate', {
@@ -517,10 +436,10 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
 
     const contentType = response.headers.get('content-type') || '';
 
-    if (response.status === 404 || response.status === 405 || contentType.includes('text/html')) {
-      backendUnavailable = true;
+    if (response.status === 404 || contentType.includes('text/html')) {
+      console.warn("[SPA/Redirect Fallback] Server single translate-endpoint returned 404 or HTML. Using direct browser translator.");
       if (!apiKey) {
-        throw new Error("No backend server found and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
+        throw new Error("No backend server found (or server returned HTML) and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
       return await clientSideTranslate(text, apiKey);
     }
@@ -535,12 +454,14 @@ export async function translateToKurdishSorani(text: string): Promise<string> {
       const data = JSON.parse(responseText);
       return data.translatedText;
     } catch {
+      console.warn("[Parse Fallback] Server response was not valid JSON. Using direct browser translator.");
       if (!apiKey) {
         throw new Error("Server returned non-JSON response and no manual Gemini API Key is set. Please set your Gemini API Key in the settings (bottom-left).");
       }
       return await clientSideTranslate(text, apiKey);
     }
   } catch (error: any) {
+    console.warn("[Translate Exception Handled] Falling back to browser-side direct translation:", error);
     if (apiKey) {
       try {
         return await clientSideTranslate(text, apiKey);
