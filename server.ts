@@ -19,31 +19,32 @@ import {
 const SYSTEM_INSTRUCTION = "You are a senior, native Kurdish Sorani translator and subtitle localization expert. Your absolute priority is to translate the input text into highly natural, idiomatic, flowing, and professional Sorani Kurdish as spoken in daily life, avoiding stiff, robotic, or literal word-for-word translations.\n\nCRITICAL Kurdish Sorani Localization Rules:\n1. GRAMMAR & WORD ORDER: Sorani Kurdish is strictly a Subject-Object-Verb (SOV) language. Restructure English sentences completely so that the verb is naturally placed at the end of the sentence or clause. Never keep English SVO structure.\n2. NATURAL IDIOMATIC PHRASING (NO LITERALISM): Convert English colloquialisms and idioms into their closest cultural equivalents in natural Sorani Kurdish. For example:\n   - 'Are you kidding me?' -> 'شۆخی دەکەیت؟' or 'گاڵتە دەکەیت؟' (NEVER 'ئایا تۆ لەگەڵ مندا گاڵتە دەکەیت؟')\n   - 'What's up?' -> 'چی هەیە؟' or 'بارودۆخ چۆنە؟'\n   - 'Oh my God!' -> 'خوایە گیان!' or 'ئەی خوایە!'\n   - 'Don't worry' -> 'نیگەران مەبە' or 'خەمت نەبێت'\n   - 'Shut up!' -> 'بێدەنگ بە!' or 'دەمت داخە!'\n   - 'Come on!' -> 'دەی!' or 'خێراکە!'\n3. PUNCTUATION & SCRIPT: Sorani is written Right-to-Left (RTL). Always use authentic Kurdish-specific punctuation marks naturally (e.g., '؟' for question mark, '،' for comma, '؛' for semicolon). Preserve dialogue hyphens naturally (e.g., '- Hello' -> '- سڵاو'). Do not move hyphens to the end of lines.\n4. ABBREVIATIONS: Smoothly transliterate English abbreviations (e.g., CIA, FBI, NASA, IT, AI) into phonetic Kurdish characters based on their spoken pronunciation (e.g., 'FBI' -> 'ئێف بی ئای', 'CIA' -> 'سی ئای ئەی', 'AI' -> 'ئەی ئای', 'TV' -> 'تی ڤی') instead of leaving them in English.\n5. SUBTITLE CONCISENESS: Subtitles need to be brief and easy to read in a short timeframe. Keep translation punchy, concise, and natural, keeping screen space and display speed in mind.\n6. LINE BREAKS: The '<br>' tag is a placeholder for a line break or newline. You MUST preserve '<br>' exactly in the output, properly integrated into the natural flow of the translated sentence. Do NOT delete or translate '<br>'.\n7. OUTPUT ONLY: Return ONLY the translated Sorani Kurdish text, completely clean of explanations, note prefixes, or quotes.";
 
 const BATCH_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION}\n\nBATCH PROCESSING INSTRUCTIONS:\n- You are translating a JSON array of English subtitle objects.\n- You MUST return a JSON array containing the exact same number of translation objects as input, mapping their IDs exactly.\n- For each input object with 'id' and 'text', output an object with 'id' and 'translatedText'.\n- CRITICAL: Under no circumstances should you echo the English text in 'translatedText'. If you cannot translate/refine a sentence into Kurdish Sorani, you MUST still provide a professional, highly localized, and natural translation or phonetic transliteration in Central Kurdish. DO NOT leave it in English.\n- Double-check your translations: stiff, literal translations (transcribing English word-by-word) or leaving English words unchanged are STRICTLY FORBIDDEN. Translate/refine everything beautifully.`;
-const MODELS = [
-  "gemini-3.1-flash-lite",
-  "gemini-3.8-flash",
+// Dedicated model lists:
+// Translation (Pass 1) prioritizes gemini-3.5-flash-lite for instant speed and high token capacity.
+const TRANSLATE_MODELS = [
+  "gemini-2.0-flash-exp",
   "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-3.8-flash",
   "gemini-3.5-flash",
   "gemini-2.5-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-3-flash-preview",
-  "gemini-flash-lite-latest",
-  "gemini-flash-latest",
-  "gemini-3.1-pro-preview",
-  "gemini-2.5-pro"
+  "gemini-flash-latest"
 ];
-let currentModelIndex = 0;
+
+// Refinement (Pass 2) prioritizes gemini-3.8-flash for deepest fluency, SOV restructuring, and native Kurdish idioms.
+const REFINE_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.1-pro-preview",
+  "gemini-2.0-flash-exp",
+  "gemini-3.5-flash",
+  "gemini-flash-latest",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite"
+];
+
 const modelCooldownUntil = new Map<string, number>();
 const unsupportedModels = new Set<string>();
-
-function getCurrentModel() {
-  return MODELS[currentModelIndex];
-}
-
-function rotateModel() {
-  currentModelIndex = (currentModelIndex + 1) % MODELS.length;
-  return MODELS[currentModelIndex];
-}
 
 function extractJson(text: string): any {
   try {
@@ -94,23 +95,22 @@ function getAI(clientApiKey?: string) {
 }
 
 /**
- * Intelligent model router that immediately skips to another model when a model
- * experiences high demand (503 / UNAVAILABLE / overloaded) or reaches quota (429 / RESOURCE_EXHAUSTED).
+ * Intelligent model router that prioritizes the task-specific model list (e.g. 3.5-flash-lite for translation,
+ * 3.8-flash for refinement) and immediately skips to alternative models if high demand (503) or quota (429) occurs.
  */
 async function callGeminiWithModelFallback<T>(
   apiKey: string,
-  fn: (ai: any, modelName: string) => Promise<T>
+  fn: (ai: any, modelName: string) => Promise<T>,
+  modelList: string[] = TRANSLATE_MODELS
 ): Promise<T> {
   const ai = getAI(apiKey);
   let lastError: any = null;
 
   for (let pass = 1; pass <= 4; pass++) {
-    const startIndex = currentModelIndex;
     let triedAnyInPass = false;
 
-    for (let offset = 0; offset < MODELS.length; offset++) {
-      const idx = (startIndex + offset) % MODELS.length;
-      const modelName = MODELS[idx];
+    for (let offset = 0; offset < modelList.length; offset++) {
+      const modelName = modelList[offset];
 
       if (unsupportedModels.has(modelName)) {
         continue;
@@ -131,7 +131,6 @@ async function callGeminiWithModelFallback<T>(
 
         const res = await fn(ai, modelName);
         modelCooldownUntil.delete(modelName);
-        currentModelIndex = idx;
         return res;
       } catch (err: any) {
         lastError = err;
@@ -145,14 +144,12 @@ async function callGeminiWithModelFallback<T>(
         // If model is not found / unsupported for this key, skip it permanently
         if (errorMsg.includes('404') || errorMsg.includes('not_found') || errorMsg.includes('not found') || errorMsg.includes('not supported')) {
           unsupportedModels.add(modelName);
-          currentModelIndex = (idx + 1) % MODELS.length;
           continue;
         }
 
         // If model reached quota / rate limit (429), put on 90s cooldown and immediately skip to next model
         if (errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('resource_exhausted') || errorMsg.includes('rate limit')) {
           modelCooldownUntil.set(modelName, Date.now() + 90_000);
-          currentModelIndex = (idx + 1) % MODELS.length;
           continue;
         }
 
@@ -168,17 +165,12 @@ async function callGeminiWithModelFallback<T>(
           errorMsg.includes('internal')
         ) {
           modelCooldownUntil.set(modelName, Date.now() + 45_000);
-          currentModelIndex = (idx + 1) % MODELS.length;
           continue;
         }
-
-        // Any other error (e.g., batch length mismatch): advance to next model and continue
-        currentModelIndex = (idx + 1) % MODELS.length;
       }
     }
 
     if (!triedAnyInPass) {
-      // All models were in cooldown on Pass 1; clear temporary cooldowns for Pass 2
       modelCooldownUntil.clear();
     }
   }
@@ -249,6 +241,40 @@ async function startServer() {
     } catch (error: any) {
       console.error("Translation API error:", error);
       res.status(500).json({ error: error.message || "Translation failed" });
+    }
+  });
+
+  // Streaming translation endpoint (SSE)
+  app.post("/api/gemini/translate-stream", async (req, res) => {
+    const { text, apiKey } = req.body;
+    if (!text) return res.status(400).json({ error: "Missing text" });
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    try {
+      await callGeminiWithModelFallback(apiKey, async (ai, modelName) => {
+        const cleanedText = text.replace(/\n/g, '<br>');
+        const result = await ai.models.generateContentStream({
+          model: modelName,
+          contents: [{ role: "user", parts: [{ text: cleanedText }] }],
+          config: { systemInstruction: SYSTEM_INSTRUCTION }
+        });
+
+        for await (const chunk of result.stream) {
+          const chunkText = chunk.text();
+          if (chunkText) {
+            res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+          }
+        }
+      });
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } catch (error: any) {
+      console.error("Streaming error:", error);
+      res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+      res.end();
     }
   });
 
@@ -381,7 +407,7 @@ async function startServer() {
             });
           }
           throw new Error(`Pass 2 Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
-        });
+        }, REFINE_MODELS);
       } catch (refineError) {
         console.warn("[Refinement Pass Bypassed] Server-side refinement failed, falling back to raw translated results:", refineError);
         // Fallback to Pass 1 translation
@@ -479,7 +505,7 @@ async function startServer() {
             });
           }
           throw new Error(`Refinement batch length mismatch. Expected ${cleanedItems.length}, got ${result?.length ?? 'non-array'}.`);
-        });
+        }, REFINE_MODELS);
       } catch (refineError) {
         console.warn("[Refinement Pass Bypassed] Server-side refinement failed, falling back to raw translated results:", refineError);
         refinedResults = cleanedItems.map((item: any) => ({

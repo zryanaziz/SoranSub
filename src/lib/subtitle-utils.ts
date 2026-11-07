@@ -706,10 +706,10 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Roboto Medium,70,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,15,0,2,10,10,19,1
-Style: Song,Arial Rounded MT Bold,70,&H0042CCFF,&H000000FF,&H00000000,&H00000000,0,-1,0,0,100,100,0,0,1,15,1,2,10,10,53,1
-Style: Skills,Berlin Sans FB Demi,70,&H00FFFC05,&H000000FF,&H00000000,&H00000000,0,-1,0,0,100,100,0,0,1,15,3,2,10,10,53,1
-Style: NDBoldSmall,Chewy,60,&H00FFFFFF,&H000000FF,&H00767158,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,2,10,10,10,1
+Style: Default,Roboto Medium,78,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,22,0,2,10,10,22,1
+Style: Song,Arial Rounded MT Bold,78,&H0042CCFF,&H000000FF,&H00000000,&H00000000,0,-1,0,0,100,100,0,0,1,22,1,2,10,10,53,1
+Style: Skills,Berlin Sans FB Demi,78,&H00FFFC05,&H000000FF,&H00000000,&H00000000,0,-1,0,0,100,100,0,0,1,22,3,2,10,10,53,1
+Style: NDBoldSmall,Chewy,68,&H00FFFFFF,&H000000FF,&H00767158,&H00000000,-1,0,0,0,100,100,0,0,1,7,2,2,10,10,12,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

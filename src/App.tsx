@@ -23,7 +23,8 @@ import {
   ChevronRight,
   FileText,
   ArrowLeftRight,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -53,7 +54,8 @@ import {
   refineBatch,
   refineSingleBlock,
   jointTranslateRefineBatch,
-  getCurrentModel
+  getCurrentModel,
+  setManualApiKey
 } from './services/gemini';
 
 function cn(...inputs: ClassValue[]) {
@@ -65,6 +67,8 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [translateProgress, setTranslateProgress] = useState(0);
+  const [refineProgress, setRefineProgress] = useState(0);
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info', message: string } | null>(null);
   const [showFinishedMessage, setShowFinishedMessage] = useState(false);
   const [fileName, setFileName] = useState<string>('');
@@ -73,6 +77,13 @@ export default function App() {
   const [replaceQuery, setReplaceQuery] = useState('');
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [showRangeModal, setShowRangeModal] = useState(false);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [customApiKey, setCustomApiKey] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('gemini_api_key') || '';
+    }
+    return '';
+  });
   const [rangeFrom, setRangeFrom] = useState<string>('1');
   const [rangeTo, setRangeTo] = useState<string>('');
   const [rangeSkipAlreadyTranslated, setRangeSkipAlreadyTranslated] = useState<boolean>(true);
@@ -491,6 +502,8 @@ export default function App() {
 
     setIsTranslating(true);
     setProgress(5);
+    setTranslateProgress(5);
+    setRefineProgress(0);
     setShowFinishedMessage(false);
     
     const batchSize = 100;
@@ -522,10 +535,10 @@ export default function App() {
       // PASS 1: TRANSLATE FIRST (Complete translation across all requested items)
       // =========================================================================
       let completedTranslateSteps = 0;
-      const passTitle = shouldRefine ? 'Pass 1/2 (Translate)' : 'Translating';
+      const passTitle = shouldRefine ? 'Pass 1/2 (3.5 Flash-Lite Translation)' : 'Translating (3.5 Flash-Lite)';
       setStatus({ 
         type: 'info', 
-        message: `${passTitle}: Translating ${totalSteps} subtitles into Kurdish Sorani...` 
+        message: `${passTitle}: Translating ${totalSteps} subtitles into Kurdish Sorani with Gemini 3.5 Flash-Lite...` 
       });
 
       for (let i = 0; i < indices.length; i += batchSize * concurrency) {
@@ -699,13 +712,15 @@ export default function App() {
         await Promise.all(batchPromises);
         setSubtitles([...updatedSubtitles]);
         completedTranslateSteps += Math.min(batchSize * concurrency, indices.length - i);
+        const transPercent = Math.min(100, Math.round((completedTranslateSteps / totalSteps) * 100));
+        setTranslateProgress(transPercent);
         const pass1Progress = Math.round((completedTranslateSteps / totalSteps) * (shouldRefine ? 50 : 100));
         setProgress(Math.max(5, pass1Progress));
         setStatus({
           type: 'info',
           message: shouldRefine
-            ? `Pass 1/2 (Translate): Translated ${completedTranslateSteps}/${totalSteps} subtitles...`
-            : `Translating: ${completedTranslateSteps}/${totalSteps} subtitles complete...`
+            ? `Pass 1/2 (Translate): Translated ${completedTranslateSteps}/${totalSteps} (${transPercent}%)...`
+            : `Translating: ${completedTranslateSteps}/${totalSteps} (${transPercent}%)...`
         });
         
         if (i + batchSize * concurrency < indices.length) {
@@ -744,10 +759,10 @@ export default function App() {
       // =========================================================================
       setStatus({ 
         type: 'info', 
-        message: `Pass 1 Complete! All ${totalSteps} subtitles translated. Starting Pass 2: Refinement & Polishing...` 
+        message: `Pass 1 Complete! Translated with Gemini 3.5 Flash-Lite. Automatically starting Pass 2: Refinement with Gemini 3.8 Flash...` 
       });
       setProgress(50);
-      await new Promise(resolve => setTimeout(resolve, 600));
+      await new Promise(resolve => setTimeout(resolve, 400));
 
       let completedRefineSteps = 0;
 
@@ -811,11 +826,13 @@ export default function App() {
         await Promise.all(refineBatchPromises);
         setSubtitles([...updatedSubtitles]);
         completedRefineSteps += Math.min(batchSize * concurrency, indices.length - i);
+        const refPercent = Math.min(100, Math.round((completedRefineSteps / totalSteps) * 100));
+        setRefineProgress(refPercent);
         const pass2Progress = 50 + Math.round((completedRefineSteps / totalSteps) * 50);
         setProgress(Math.min(100, pass2Progress));
         setStatus({
           type: 'info',
-          message: `Pass 2/2 (Refine): Polished ${completedRefineSteps}/${totalSteps} subtitles (SOV, natural phrasing, RTL)...`
+          message: `Pass 2/2 (Refine): Polished ${completedRefineSteps}/${totalSteps} (${refPercent}%)...`
         });
 
         if (i + batchSize * concurrency < indices.length) {
@@ -838,6 +855,8 @@ export default function App() {
       setIsRtlHyphen(true);
 
       setProgress(100);
+      setTranslateProgress(100);
+      if (shouldRefine) setRefineProgress(100);
       setStatus({ type: 'success', message: `2-Pass Pipeline complete! Successfully translated and refined all ${totalSteps} subtitles.` });
       playDing();
       
@@ -845,12 +864,16 @@ export default function App() {
       setTimeout(() => {
         setIsTranslating(false);
         setProgress(0);
+        setTranslateProgress(0);
+        setRefineProgress(0);
       }, 500);
     } catch (err: any) {
       console.log("Process failed:", err);
       setStatus({ type: 'error', message: `Process failed: ${err.message || 'Unknown error'}. Please try again.` });
       setIsTranslating(false);
       setProgress(0);
+      setTranslateProgress(0);
+      setRefineProgress(0);
     }
   };
 
@@ -1136,24 +1159,56 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Global Progress Bar */}
+      {/* Dual Progress Bars: Line 1 for Translate (3.5 Flash-Lite), Line 2 for Refinement (3.8 Flash) */}
       <AnimatePresence>
         {(isTranslating || isExtractingMkv) && (
           <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed top-0 left-0 right-0 h-1.5 md:h-2 bg-[#141414] z-[100] origin-left overflow-hidden shadow-sm"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="fixed top-0 left-0 right-0 z-[100] bg-[#141414] shadow-md flex flex-col"
           >
-            <motion.div 
-              className={cn(
-                "h-full shadow-[0_0_10px_rgba(249,115,22,0.8)]",
-                isExtractingMkv ? "bg-blue-500 w-full animate-pulse" : "bg-orange-500"
-              )}
-              initial={{ width: "0%" }}
-              animate={{ width: isExtractingMkv ? "100%" : `${progress}%` }}
-              transition={{ ease: "easeOut", duration: 0.3 }}
-            />
+            {/* Top Indicator Labels */}
+            {!isExtractingMkv && isDoublePassEnabled && (
+              <div className="flex items-center justify-between px-3 py-0.5 text-[8.5px] md:text-[9.5px] font-mono tracking-wider text-[#E4E3E0] select-none bg-[#141414]">
+                <div className="flex items-center gap-1.5 text-blue-400 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                  <span>Translate (3.5 Flash-Lite): {translateProgress}%</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                  <span className={cn(
+                    "w-1.5 h-1.5 rounded-full",
+                    refineProgress > 0 ? "bg-emerald-400 animate-pulse" : "bg-zinc-600"
+                  )} />
+                  <span>Refinement (3.8 Flash): {refineProgress}%</span>
+                </div>
+              </div>
+            )}
+
+            {/* Line 1: Translate Progress (Blue / Sky) */}
+            <div className="h-1.5 md:h-2 w-full bg-[#1c1c1c] overflow-hidden relative">
+              <motion.div 
+                className={cn(
+                  "h-full shadow-[0_0_8px_rgba(59,130,246,0.8)]",
+                  isExtractingMkv ? "bg-blue-500 w-full animate-pulse" : "bg-gradient-to-r from-blue-600 to-sky-400"
+                )}
+                initial={{ width: "0%" }}
+                animate={{ width: isExtractingMkv ? "100%" : `${translateProgress}%` }}
+                transition={{ ease: "easeOut", duration: 0.3 }}
+              />
+            </div>
+
+            {/* Line 2: Refinement Progress (Emerald / Green) - Only when 2-Pass enabled */}
+            {!isExtractingMkv && isDoublePassEnabled && (
+              <div className="h-1.5 md:h-2 w-full bg-[#181818] overflow-hidden relative border-t border-[#141414]/40">
+                <motion.div 
+                  className="h-full bg-gradient-to-r from-emerald-600 to-teal-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"
+                  initial={{ width: "0%" }}
+                  animate={{ width: `${refineProgress}%` }}
+                  transition={{ ease: "easeOut", duration: 0.3 }}
+                />
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -1279,9 +1334,15 @@ export default function App() {
             }
           >
             {isTranslating ? (
-              <div className="flex items-center gap-1">
-                <Loader2 size={14} className="animate-spin" />
-                <span className="text-[8px] font-mono">{progress}%</span>
+              <div className="flex items-center gap-1.5 font-mono text-[8px] md:text-[9px]">
+                <Loader2 size={13} className="animate-spin text-orange-400" />
+                <span className="text-blue-400 font-bold">{translateProgress}%</span>
+                {isDoublePassEnabled && (
+                  <>
+                    <span className="text-zinc-500">/</span>
+                    <span className="text-emerald-400 font-bold">{refineProgress}%</span>
+                  </>
+                )}
               </div>
             ) : (
               <Languages size={14} />
@@ -1345,6 +1406,17 @@ export default function App() {
             title="Translate & Refine Range"
           >
             <ChevronRight size={14} />
+          </button>
+
+          <button 
+            onClick={() => setShowApiKeyModal(true)}
+            className={cn(
+              "flex items-center justify-center p-1.5 md:p-2 border border-[#141414] transition-colors rounded-sm",
+              customApiKey ? "bg-amber-100/60 border-amber-800 text-amber-900" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
+            )}
+            title={customApiKey ? "Gemini API Key: Custom key set" : "Set Gemini API Key"}
+          >
+            <Key size={14} className={customApiKey ? "text-amber-800" : ""} />
           </button>
 
           <div className="hidden md:block h-6 w-[1px] bg-[#141414] opacity-20" />
@@ -1583,6 +1655,14 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-4">
+          <button
+            onClick={() => setShowApiKeyModal(true)}
+            className="flex items-center gap-1.5 px-2 py-0.5 border border-[#141414]/20 hover:border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors rounded-sm cursor-pointer"
+            title="Configure or change Gemini API Key"
+          >
+            <Key size={11} className={customApiKey ? "text-amber-600" : ""} />
+            <span>{customApiKey ? "API Key: Configured" : "API Key"}</span>
+          </button>
           <span className="opacity-40">Build 2026.06</span>
         </div>
       </footer>
@@ -1755,6 +1835,103 @@ export default function App() {
                 >
                   Apply Sync
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Manual API Key Configuration Modal */}
+      <AnimatePresence>
+        {showApiKeyModal && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowApiKeyModal(false)}
+              className="absolute inset-0 bg-[#141414]/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              className="relative bg-[#E4E3E0] w-full max-w-md p-6 md:p-8 rounded-sm shadow-2xl border border-[#141414]"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Key size={18} className="text-[#141414]" />
+                  <h3 className="font-serif italic text-xl md:text-2xl">Gemini API Key</h3>
+                </div>
+                <button 
+                  onClick={() => setShowApiKeyModal(false)} 
+                  className="p-1 opacity-50 hover:opacity-100 transition-opacity"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              
+              <div className="space-y-4">
+                <p className="text-xs font-mono leading-relaxed opacity-75">
+                  Enter your Google Gemini API key below. If left blank, the server uses the default environment key.
+                </p>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-widest font-mono opacity-60 font-bold">
+                    API Key
+                  </label>
+                  <input 
+                    type="password"
+                    value={customApiKey}
+                    onChange={(e) => setCustomApiKey(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full bg-white border border-[#141414] p-3 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-[#141414] rounded-sm"
+                  />
+                  <p className="text-[9.5px] font-mono opacity-50 italic">
+                    Key is securely stored in your browser's local storage and passed directly for translation requests.
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                  <button 
+                    onClick={() => {
+                      const trimmed = customApiKey.trim();
+                      setManualApiKey(trimmed);
+                      setShowApiKeyModal(false);
+                      setStatus({
+                        type: 'success',
+                        message: trimmed ? 'Custom Gemini API Key saved.' : 'Cleared custom key; using default server key.'
+                      });
+                    }}
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:opacity-90 transition-all font-bold cursor-pointer rounded-sm"
+                  >
+                    Save Key
+                  </button>
+
+                  {customApiKey && (
+                    <button 
+                      onClick={() => {
+                        setCustomApiKey('');
+                        setManualApiKey('');
+                        setShowApiKeyModal(false);
+                        setStatus({
+                          type: 'info',
+                          message: 'Custom API Key removed; reverting to default key.'
+                        });
+                      }}
+                      className="py-3 px-4 border border-red-500 text-red-600 hover:bg-red-500 hover:text-white font-mono text-xs uppercase tracking-widest transition-all cursor-pointer rounded-sm"
+                    >
+                      Clear
+                    </button>
+                  )}
+
+                  <button 
+                    onClick={() => setShowApiKeyModal(false)}
+                    className="py-3 px-4 border border-[#141414]/20 hover:border-[#141414] font-mono text-xs uppercase tracking-widest transition-all cursor-pointer rounded-sm"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
